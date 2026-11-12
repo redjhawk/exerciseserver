@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart exerciseserver after an update
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart exerciseserver.service

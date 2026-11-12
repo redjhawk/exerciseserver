@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for new exerciseserver releases
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

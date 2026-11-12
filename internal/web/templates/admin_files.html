@@ -1,0 +1,54 @@
+{{define "content"}}
+<h1>Ficheros</h1>
+<section class="panel">
+  <h2>Subir ejercicios</h2>
+  <form method="post" action="/admin/ficheros" enctype="multipart/form-data" class="stack" id="upload-form">
+    <input type="hidden" name="csrf" value="{{.Session.CSRFToken}}">
+    <label class="dropzone" id="dropzone">
+      <input type="file" name="files" multiple accept=".html,.htm,.pdf,text/html,application/pdf" required>
+      <span>Arrastra aquí ficheros .html o .pdf, o pulsa para elegirlos</span>
+      <ul id="file-list"></ul>
+    </label>
+    <div class="row">
+      <label>Nivel
+        <select name="level_id">
+          <option value="0">— Sin nivel —</option>
+          {{range .Data.Levels}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        </select>
+      </label>
+      <label>…o nivel nuevo <input name="new_level" placeholder="p. ej. 2º Primaria"></label>
+    </div>
+    {{template "tagInput" .Data.Tags}}
+    <label>Descripción (opcional) <input name="description" maxlength="500"></label>
+    <p class="hint">El título se toma del &lt;title&gt; del HTML o del nombre del fichero; luego puedes cambiarlo. El nivel, las etiquetas y la descripción se aplican a todos los ficheros de esta subida.</p>
+    <button type="submit" class="primary">Subir</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>{{len .Data.Files}} fichero(s)</h2>
+  <input type="search" class="table-filter" data-table="files-table" placeholder="Filtrar la tabla…">
+  <table class="list" id="files-table">
+    <thead><tr><th>Título</th><th>Nivel</th><th>Etiquetas</th><th>Tipo</th><th>Subido</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data.Files}}
+    <tr>
+      <td><a href="/ver/{{.ID}}">{{.Title}}</a><br><small class="muted">{{.OrigName}} · {{size .Size}}</small></td>
+      <td>{{.LevelName}}</td>
+      <td>{{range .Tags}}<span class="tag">{{.}}</span>{{end}}</td>
+      <td>{{.Kind}}</td>
+      <td>{{date .UploadedAt}}</td>
+      <td class="actions"><a class="button small" href="/admin/ficheros/{{.ID}}">Editar</a></td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+
+{{define "tagInput"}}
+<label>Etiquetas (separadas por comas)
+  <input name="tags" class="tags-input" placeholder="matemáticas, sumas" value="">
+</label>
+{{if .}}<div class="tag-suggestions">{{range .}}<button type="button" class="chip small add-tag" data-tag="{{.Name}}">+ {{.Name}}</button>{{end}}</div>{{end}}
+{{end}}

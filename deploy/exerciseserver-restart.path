@@ -1,0 +1,9 @@
+[Unit]
+Description=Restart exerciseserver when a new release has been installed
+
+[Path]
+PathModified=/opt/exerciseserver/bin/.restart
+Unit=exerciseserver-restart.service
+
+[Install]
+WantedBy=multi-user.target

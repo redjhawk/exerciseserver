@@ -1,0 +1,40 @@
+{{define "content"}}
+{{$csrf := .Session.CSRFToken}}
+<h1>Niveles</h1>
+<section class="panel">
+  <h2>Nuevo nivel</h2>
+  <form method="post" action="/admin/niveles" class="row">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label>Nombre <input name="name" required placeholder="p. ej. 1º Primaria"></label>
+    <label>Orden <input name="position" type="number" value="{{len .Data}}0" size="4"></label>
+    <button type="submit" class="primary">Crear</button>
+  </form>
+</section>
+<section class="panel">
+  <table class="list">
+    <thead><tr><th>Orden</th><th>Nombre</th><th>Ficheros</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data}}
+    <tr>
+      <td colspan="2">
+        <form method="post" action="/admin/niveles/{{.ID}}" class="inline">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input name="position" type="number" value="{{.Position}}" class="narrow">
+          <input name="name" value="{{.Name}}" required>
+          <button type="submit" class="small">Guardar</button>
+        </form>
+      </td>
+      <td>{{.Count}}</td>
+      <td class="actions">
+        <form method="post" action="/admin/niveles/{{.ID}}/borrar" data-confirm="¿Borrar el nivel {{.Name}}? Sus {{.Count}} fichero(s) quedarán sin nivel.">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <button type="submit" class="small danger">Borrar</button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  <p class="hint">Los niveles se muestran ordenados por el número de «Orden» (de menor a mayor).</p>
+</section>
+{{end}}

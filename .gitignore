@@ -1,0 +1,4 @@
+data/
+release/
+/exerciseserver
+*.sqlite*

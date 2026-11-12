@@ -1,0 +1,12 @@
+{{define "content"}}
+<div class="login-box">
+  <img src="/static/icon.svg" alt="" width="72" height="72">
+  <h1>Ejercicios</h1>
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{.Data.Next}}">
+    <label>Usuario <input name="username" autocomplete="username" autocapitalize="none" required autofocus></label>
+    <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit" class="primary big">Entrar</button>
+  </form>
+</div>
+{{end}}

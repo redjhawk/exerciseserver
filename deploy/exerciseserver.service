@@ -1,0 +1,39 @@
+[Unit]
+Description=Exercise server (ejercicios)
+After=network-online.target
+Wants=network-online.target
+# Before the first release is downloaded there is nothing to run;
+# exerciseserver-restart.path starts the service once the binary appears.
+ConditionPathExists=/opt/exerciseserver/bin/exerciseserver
+
+[Service]
+Type=simple
+User=exerciseserver
+Group=exerciseserver
+StateDirectory=exerciseserver
+StateDirectoryMode=0750
+Environment=EXERCISESERVER_DATA_DIR=/var/lib/exerciseserver
+Environment=EXERCISESERVER_ADDR=127.0.0.1:8090
+EnvironmentFile=-/etc/exerciseserver.env
+ExecStart=/opt/exerciseserver/bin/exerciseserver serve
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

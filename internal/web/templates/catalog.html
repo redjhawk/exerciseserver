@@ -1,0 +1,46 @@
+{{define "content"}}
+<section class="filters" id="filters">
+  <input type="search" id="q" placeholder="Buscar por título…" aria-label="Buscar">
+  {{if .Data.Levels}}
+  <div class="filter-group">
+    <span class="label">Nivel</span>
+    {{range .Data.Levels}}<button type="button" class="chip level-chip" data-level="{{.ID}}">{{.Name}}</button>{{end}}
+  </div>
+  {{end}}
+  <div class="filter-group">
+    <span class="label">Tipo</span>
+    <button type="button" class="chip kind-chip" data-kind="html">🖥️ Interactivo</button>
+    <button type="button" class="chip kind-chip" data-kind="pdf">📄 PDF</button>
+  </div>
+  {{if .Data.Tags}}
+  <div class="filter-group tags">
+    <span class="label">Etiquetas</span>
+    {{range .Data.Tags}}{{if .Count}}<button type="button" class="chip tag-chip" data-tag="{{lower .Name}}">{{.Name}} <small>{{.Count}}</small></button>{{end}}{{end}}
+  </div>
+  {{end}}
+  <div class="filter-summary"><span id="count"></span> <button type="button" class="link" id="clear" hidden>Quitar filtros</button></div>
+</section>
+
+{{if not .Data.Files}}
+<p class="empty">Todavía no hay ejercicios.{{if .Session.User.IsAdmin}} <a href="/admin/ficheros">Sube el primero</a>.{{end}}</p>
+{{end}}
+
+<section class="cards" id="cards">
+{{range .Data.Files}}
+  <a class="card kind-{{.Kind}}" href="/ver/{{.ID}}"
+     data-level="{{if .LevelID.Valid}}{{.LevelID.Int64}}{{end}}" data-kind="{{.Kind}}"
+     data-tags="{{tagsAttr .Tags}}" data-text="{{lower .Title}} {{lower .Description}}">
+    <div class="card-icon">{{if eq .Kind "pdf"}}📄{{else}}🖥️{{end}}</div>
+    <div class="card-body">
+      <h2>{{.Title}}</h2>
+      {{if .Description}}<p class="desc">{{.Description}}</p>{{end}}
+      <div class="meta">
+        {{if .LevelName}}<span class="level">{{.LevelName}}</span>{{end}}
+        {{range .Tags}}<span class="tag">{{.}}</span>{{end}}
+      </div>
+    </div>
+  </a>
+{{end}}
+</section>
+<p class="empty" id="no-results" hidden>Ningún ejercicio coincide con los filtros.</p>
+{{end}}

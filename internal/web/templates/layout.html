@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Ejercicios</title>
+<link rel="stylesheet" href="/static/app.css?v={{.Version}}">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<script src="/static/app.js?v={{.Version}}" defer></script>
+</head>
+<body class="page-{{.Active}}">
+{{if .Session.User.ID}}
+<header class="topbar">
+  <a class="brand" href="/"><img src="/static/icon.svg" alt="" width="28" height="28"> Ejercicios</a>
+  <nav>
+    <a href="/" {{if or (eq .Active "catalog") (eq .Active "viewer")}}class="on"{{end}}>Catálogo</a>
+    {{if .Session.User.IsAdmin}}
+    <a href="/admin/ficheros" {{if eq .Active "files"}}class="on"{{end}}>Ficheros</a>
+    <a href="/admin/usuarios" {{if eq .Active "users"}}class="on"{{end}}>Usuarios</a>
+    <a href="/admin/niveles" {{if eq .Active "levels"}}class="on"{{end}}>Niveles</a>
+    <a href="/admin/etiquetas" {{if eq .Active "tags"}}class="on"{{end}}>Etiquetas</a>
+    {{end}}
+  </nav>
+  <form method="post" action="/logout" class="logout">
+    <input type="hidden" name="csrf" value="{{.Session.CSRFToken}}">
+    <span class="who">{{.Session.User.Username}}</span>
+    <button type="submit" class="link">Salir</button>
+  </form>
+</header>
+{{end}}
+<main class="{{if eq .Active "viewer"}}wide{{end}}">
+{{if .Flash}}<div class="msg ok">{{.Flash}}</div>{{end}}
+{{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>

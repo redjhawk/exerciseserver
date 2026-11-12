@@ -1,0 +1,29 @@
+[Unit]
+Description=Download the latest exerciseserver release from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Unprivileged: this user can only write /opt/exerciseserver/bin. Restarting the
+# service is done by root in exerciseserver-restart.path, which downloads nothing.
+User=exerciseserver-update
+Group=exerciseserver-update
+Environment=EXERCISESERVER_REPO=redjhawk/exerciseserver
+EnvironmentFile=-/etc/exerciseserver.env
+ExecStart=/usr/local/lib/exerciseserver/update.sh
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/exerciseserver/bin
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=

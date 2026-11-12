@@ -1,0 +1,36 @@
+{{define "content"}}
+{{$csrf := .Session.CSRFToken}}
+{{with .Data}}
+<p><a href="/admin/ficheros">← Ficheros</a></p>
+<h1>Editar ejercicio</h1>
+<section class="panel">
+  <p class="muted">{{.File.OrigName}} · {{.File.Kind}} · {{size .File.Size}} · subido el {{date .File.UploadedAt}} · <a href="/ver/{{.File.ID}}">ver</a></p>
+  <form method="post" action="/admin/ficheros/{{.File.ID}}" class="stack">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label>Título <input name="title" value="{{.File.Title}}" required maxlength="200"></label>
+    <label>Descripción <input name="description" value="{{.File.Description}}" maxlength="500"></label>
+    <div class="row">
+      <label>Nivel
+        <select name="level_id">
+          <option value="0">— Sin nivel —</option>
+          {{$cur := .File.LevelID.Int64}}
+          {{range .Levels}}<option value="{{.ID}}" {{if eq .ID $cur}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </label>
+      <label>…o nivel nuevo <input name="new_level"></label>
+    </div>
+    <label>Etiquetas (separadas por comas)
+      <input name="tags" class="tags-input" value="{{join .File.Tags ", "}}">
+    </label>
+    {{if .Tags}}<div class="tag-suggestions">{{range .Tags}}<button type="button" class="chip small add-tag" data-tag="{{.Name}}">+ {{.Name}}</button>{{end}}</div>{{end}}
+    <button type="submit" class="primary">Guardar</button>
+  </form>
+</section>
+<section class="panel danger">
+  <form method="post" action="/admin/ficheros/{{.File.ID}}/borrar" data-confirm="¿Borrar «{{.File.Title}}»? No se puede deshacer.">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <button type="submit" class="danger">Borrar este fichero</button>
+  </form>
+</section>
+{{end}}
+{{end}}

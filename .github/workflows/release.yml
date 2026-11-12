@@ -1,0 +1,51 @@
+# Every push to the default branch builds the Linux amd64 binary and publishes a GitHub release
+# v<UTC timestamp> with the binary and its .sha256. The server pulls it with deploy/update.sh.
+name: release
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build
+        run: |
+          TAG="v$(date -u +%Y%m%d-%H%M%S)"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          mkdir -p release
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X main.version=$TAG" \
+            -o release/exerciseserver-linux-amd64 ./cmd/exerciseserver
+          cd release && sha256sum exerciseserver-linux-amd64 > exerciseserver-linux-amd64.sha256
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes \
+            release/exerciseserver-linux-amd64 \
+            release/exerciseserver-linux-amd64.sha256

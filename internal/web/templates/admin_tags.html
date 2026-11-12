@@ -1,0 +1,32 @@
+{{define "content"}}
+{{$csrf := .Session.CSRFToken}}
+<h1>Etiquetas</h1>
+<section class="panel">
+  <p class="hint">Las etiquetas se crean al escribirlas en un fichero. Si renombras una etiqueta con el nombre de otra que ya existe, se fusionan.</p>
+  <table class="list">
+    <thead><tr><th>Nombre</th><th>Ficheros</th><th></th></tr></thead>
+    <tbody>
+    {{range .Data}}
+    <tr>
+      <td>
+        <form method="post" action="/admin/etiquetas/{{.ID}}" class="inline">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input name="name" value="{{.Name}}" required>
+          <button type="submit" class="small">Renombrar</button>
+        </form>
+      </td>
+      <td>{{.Count}}</td>
+      <td class="actions">
+        <form method="post" action="/admin/etiquetas/{{.ID}}/borrar" data-confirm="¿Borrar la etiqueta {{.Name}}? Se quitará de {{.Count}} fichero(s).">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <button type="submit" class="small danger">Borrar</button>
+        </form>
+      </td>
+    </tr>
+    {{else}}
+    <tr><td colspan="3" class="muted">Aún no hay etiquetas.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

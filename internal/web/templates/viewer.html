@@ -1,0 +1,34 @@
+{{define "content"}}
+{{with .Data}}
+<div class="viewer-head">
+  <a href="/" class="button back" data-back>← Volver</a>
+  <div class="viewer-title">
+    <h1>{{.Title}}</h1>
+    <div class="meta">
+      {{if .LevelName}}<span class="level">{{.LevelName}}</span>{{end}}
+      {{range .Tags}}<span class="tag">{{.}}</span>{{end}}
+    </div>
+  </div>
+  <div class="viewer-actions">
+    {{if eq .Kind "html"}}
+    <button type="button" class="button" id="fullscreen">⛶ Pantalla completa</button>
+    <a class="button" href="/f/{{.ID}}/contenido" target="_blank" rel="noopener">Abrir aparte</a>
+    {{else}}
+    <a class="button primary" href="/f/{{.ID}}/descargar">⬇ Descargar PDF</a>
+    <a class="button" href="/f/{{.ID}}/contenido" target="_blank" rel="noopener">Abrir</a>
+    {{end}}
+  </div>
+</div>
+{{if .Description}}<p class="desc">{{.Description}}</p>{{end}}
+{{if eq .Kind "html"}}
+<iframe id="exercise" class="exercise" src="/f/{{.ID}}/contenido" title="{{.Title}}"
+  sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads" allow="fullscreen"></iframe>
+{{else}}
+<div class="pdf-box">
+  <p>📄 {{.OrigName}} · {{size .Size}}</p>
+  <a class="button primary big" href="/f/{{.ID}}/descargar">⬇ Descargar PDF</a>
+</div>
+<iframe class="exercise pdf" src="/f/{{.ID}}/contenido" title="{{.Title}}"></iframe>
+{{end}}
+{{end}}
+{{end}}
