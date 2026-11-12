@@ -31,7 +31,7 @@ jobs:
 
       - name: Build
         run: |
-          TAG="v$(date -u +%Y%m%d-%H%M%S)"
+          TAG="v$(date -u +%Y%m%d%H%M%S)"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           mkdir -p release
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
@@ -44,8 +44,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$TAG" \
-            --target "$GITHUB_SHA" \
-            --title "$TAG" \
-            --generate-notes \
             release/exerciseserver-linux-amd64 \
-            release/exerciseserver-linux-amd64.sha256
+            release/exerciseserver-linux-amd64.sha256 \
+            --target "$GITHUB_SHA" \
+            --notes "Compilación automática"

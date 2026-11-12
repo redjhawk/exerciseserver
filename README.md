@@ -41,7 +41,7 @@ Cada push a `master` o `main` ejecuta [`.github/workflows/release.yml`](.github/
 
 1. Ejecuta `go vet` y los tests.
 2. Compila `exerciseserver-linux-amd64` estático (sin CGO).
-3. Publica la release `v<YYYYMMDD-HHMMSS>` con el binario y su `.sha256`.
+3. Publica la release `v<YYYYMMDDHHMMSS>` con el binario y su `.sha256`.
 
 ### Instalación en el servidor (una sola vez)
 
