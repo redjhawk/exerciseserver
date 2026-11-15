@@ -520,6 +520,17 @@ func TestAPIListProviderModels(t *testing.T) {
 	if models, ok := v["models"].([]any); !ok || len(models) != 2 {
 		t.Fatalf("unexpected models payload: %#v", v)
 	}
+
+	masked := maskAPIKey("AIzaFakeKey1234567890")
+	resp, err = kid.PostForm(ts.URL+"/api/ia/models", url.Values{"provider": {"gemini"}, "api_key": {masked}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("masked models: %d %s", resp.StatusCode, string(b))
+	}
 }
 
 func TestGeminiModelFallbackOnNotFound(t *testing.T) {

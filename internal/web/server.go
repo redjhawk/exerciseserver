@@ -61,13 +61,13 @@ func New(st *store.Store, dataDir, version string) (*Server, error) {
 	s := &Server{store: st, filesDir: filesDir, version: version, pages: map[string]*template.Template{},
 		limiter: &loginLimiter{fails: map[string][]time.Time{}}, apiLimiter: &rateLimiter{byUser: map[int64][]time.Time{}}, httpClient: &http.Client{Timeout: 30 * time.Second}}
 	funcs := template.FuncMap{
-		"join":         strings.Join,
-		"size":         humanSize,
-		"date":         func(t time.Time) string { return t.Format("02/01/2006") },
-		"lower":        strings.ToLower,
-		"defaultModel": defaultModel,
+		"join":          strings.Join,
+		"size":          humanSize,
+		"date":          func(t time.Time) string { return t.Format("02/01/2006") },
+		"lower":         strings.ToLower,
+		"defaultModel":  defaultModel,
 		"defaultModels": defaultModels,
-		"maskKey":      maskAPIKey,
+		"maskKey":       maskAPIKey,
 		"tagsAttr": func(tags []string) string {
 			l := make([]string, len(tags))
 			for i, t := range tags {
@@ -860,6 +860,9 @@ func (s *Server) adminUserAI(w http.ResponseWriter, r *http.Request, _ store.Ses
 	provider := r.FormValue("provider")
 	apiKey := r.FormValue("api_key")
 	model := strings.TrimSpace(r.FormValue("model"))
+	if cfg, err := s.store.GetEffectiveUserAI(id); err == nil && cfg.APIKey != "" {
+		apiKey = resolveStoredAPIKey(cfg.APIKey, apiKey)
+	}
 	force := r.FormValue("force") == "1"
 	if force {
 		err := s.store.SetUserAIFixedWithModel(id, true, provider, apiKey, model)
@@ -887,22 +890,22 @@ func (s *Server) userAIUpdate(w http.ResponseWriter, r *http.Request, sess store
 	apiKey := r.FormValue("api_key")
 	model := strings.TrimSpace(r.FormValue("model"))
 	current, err := s.store.GetEffectiveUserAI(sess.User.ID)
-	if err == nil && current.Forced {
+	if err == nil {
 		if provider == "" {
 			provider = current.Provider
 		}
-		if apiKey == "" {
-			apiKey = current.APIKey
-		}
-		if provider != "none" && model == "" {
-			model = current.Model
-		}
-		if err := s.store.SetUserAIFixedWithModel(sess.User.ID, true, provider, apiKey, model); err != nil {
-			redirectMsg(w, r, "/mi-ia", err, "")
+		apiKey = resolveStoredAPIKey(current.APIKey, apiKey)
+		if current.Forced {
+			if provider != "none" && model == "" {
+				model = current.Model
+			}
+			if err := s.store.SetUserAIFixedWithModel(sess.User.ID, true, provider, apiKey, model); err != nil {
+				redirectMsg(w, r, "/mi-ia", err, "")
+				return
+			}
+			redirectMsg(w, r, "/mi-ia", nil, "IA forzada actualizada")
 			return
 		}
-		redirectMsg(w, r, "/mi-ia", nil, "IA forzada actualizada")
-		return
 	}
 	if provider != "none" && model == "" {
 		model = defaultModel(provider)
@@ -1351,6 +1354,9 @@ func (s *Server) apiModels(w http.ResponseWriter, r *http.Request, sess store.Se
 	}
 	provider := r.FormValue("provider")
 	apiKey := r.FormValue("api_key")
+	if cfg, err := s.store.GetEffectiveUserAI(sess.User.ID); err == nil && cfg.Provider == provider && cfg.APIKey != "" {
+		apiKey = resolveStoredAPIKey(cfg.APIKey, apiKey)
+	}
 	provider = store.NormalizeAIProvider(provider)
 	if provider == "none" {
 		writeAPIError(w, http.StatusBadRequest, "invalid_provider", "Selecciona un proveedor", "")
@@ -1391,6 +1397,29 @@ func maskAPIKey(key string) string {
 		return strings.Repeat("*", len(key))
 	}
 	return key[:2] + strings.Repeat("*", len(key)-4) + key[len(key)-2:]
+}
+
+func resolveStoredAPIKey(storedKey, submittedKey string) string {
+	storedKey = strings.TrimSpace(storedKey)
+	submittedKey = strings.TrimSpace(submittedKey)
+	if storedKey == "" || submittedKey == "" {
+		return submittedKey
+	}
+	if submittedKey == storedKey {
+		return storedKey
+	}
+	if len(submittedKey) != len(storedKey) || len(submittedKey) < 4 || !strings.Contains(submittedKey, "*") {
+		return submittedKey
+	}
+	if submittedKey[:2] != storedKey[:2] || submittedKey[len(submittedKey)-2:] != storedKey[len(storedKey)-2:] {
+		return submittedKey
+	}
+	for i := 2; i < len(submittedKey)-2; i++ {
+		if submittedKey[i] != '*' {
+			return submittedKey
+		}
+	}
+	return storedKey
 }
 
 func (s *Server) callOpenAI(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
