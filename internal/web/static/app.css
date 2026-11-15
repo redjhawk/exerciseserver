@@ -59,7 +59,12 @@ main.wide { max-width: none; }
 .topbar nav a { padding: 6px 10px; border-radius: 8px; text-decoration: none; color: var(--text); }
 .topbar nav a.on, .topbar nav a:hover { background: var(--accent-soft); }
 .logout { display: flex; align-items: center; gap: 8px; margin: 0; }
+.identity { display: inline-flex; align-items: center; gap: 8px; }
 .who { color: var(--muted); }
+.version {
+  display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+}
 
 button, .button {
   font: inherit; cursor: pointer; display: inline-block; text-decoration: none;

@@ -23,7 +23,10 @@
   </nav>
   <form method="post" action="/logout" class="logout">
     <input type="hidden" name="csrf" value="{{.Session.CSRFToken}}">
-    <span class="who">{{.Session.User.Username}}</span>
+    <div class="identity">
+      <span class="who">{{.Session.User.Username}}</span>
+      <span class="version">{{.Version}}</span>
+    </div>
     <button type="submit" class="link">Salir</button>
   </form>
 </header>
