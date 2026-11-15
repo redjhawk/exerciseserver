@@ -446,6 +446,47 @@ func TestForcedAISettingsMaskSecretAndKeepModelSelectable(t *testing.T) {
 	}
 }
 
+func TestSavedCustomModelStaysSelectedAfterReload(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserAIWithModel(2, "gemini", "AIzaFakeKey1234567890", "gemini-2.5-flash"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	kid := client(t)
+	login(t, kid, ts.URL, "nino", "1234")
+	resp, err := kid.Get(ts.URL + "/mi-ia")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(body)
+	if !strings.Contains(page, "value=\"gemini-2.5-flash\" selected") {
+		t.Fatalf("saved custom model missing from rendered selector: %s", page)
+	}
+}
+
 func TestAIProviderKeyFormatValidation(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "db.sqlite"))

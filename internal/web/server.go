@@ -67,6 +67,7 @@ func New(st *store.Store, dataDir, version string) (*Server, error) {
 		"lower":         strings.ToLower,
 		"defaultModel":  defaultModel,
 		"defaultModels": defaultModels,
+		"modelOptions":  modelOptions,
 		"maskKey":       maskAPIKey,
 		"tagsAttr": func(tags []string) string {
 			l := make([]string, len(tags))
@@ -1110,6 +1111,18 @@ func defaultModels(provider string) []string {
 	default:
 		return nil
 	}
+}
+
+func modelOptions(provider, selected string) []string {
+	provider = store.NormalizeAIProvider(provider)
+	models := defaultModels(provider)
+	if selected == "" {
+		return models
+	}
+	if !contains(models, selected) {
+		models = append([]string{selected}, models...)
+	}
+	return models
 }
 
 func fetchProviderModels(provider, apiKey string, client *http.Client) ([]string, error) {

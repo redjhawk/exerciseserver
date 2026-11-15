@@ -43,7 +43,7 @@
           <label>
             <select name="model">
               {{if ne .AIProvider "none"}}
-                {{range defaultModels .AIProvider}}
+                {{range modelOptions .AIProvider $.AIModel}}
                 <option value="{{.}}" {{if eq $.AIModel .}}selected{{end}}>{{.}}</option>
                 {{end}}
               {{else}}

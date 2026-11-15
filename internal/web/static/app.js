@@ -84,15 +84,17 @@
   const aiCsrfInput = document.querySelector('input[name="csrf"]');
   if (aiProvider && aiApiKey && aiModel && aiCsrfInput) {
     const setOptions = (models, selected) => {
+      const list = Array.isArray(models) ? [...models] : [];
+      if (selected && !list.includes(selected)) list.unshift(selected);
       aiModel.innerHTML = "";
-      if (!models || models.length === 0) {
+      if (!list || list.length === 0) {
         const empty = document.createElement("option");
         empty.value = "";
         empty.textContent = "Sin modelo";
         aiModel.appendChild(empty);
         return;
       }
-      models.forEach((model) => {
+      list.forEach((model) => {
         const option = document.createElement("option");
         option.value = model;
         option.textContent = model;

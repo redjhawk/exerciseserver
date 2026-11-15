@@ -24,7 +24,7 @@
     <label>Modelo
       <select id="ai-model" name="model">
         {{if ne .Data.Provider "none"}}
-          {{range defaultModels .Data.Provider}}
+          {{range modelOptions .Data.Provider $.Data.Model}}
           <option value="{{.}}" {{if eq $.Data.Model .}}selected{{end}}>{{.}}</option>
           {{end}}
         {{else}}
