@@ -89,6 +89,93 @@
   if (fs && frame) {
     if (!frame.requestFullscreen) fs.hidden = true;
     fs.addEventListener("click", () => frame.requestFullscreen && frame.requestFullscreen());
+
+    const respondToFrame = (source, payload) => {
+      if (!source || typeof source.postMessage !== "function") return;
+      source.postMessage({ ...payload, source: "exerciseserver" }, "*");
+    };
+
+    const handleExerciseMessage = (event) => {
+      if (!event || !event.data || typeof event.data !== "object") return;
+      if (event.source !== frame.contentWindow) return;
+      const type = event.data.type;
+      const requestId = event.data.requestId || null;
+      const supported = new Set(["exerciseserver:ia", "exerciseserver:ia:config", "ia:hello", "ia:config", "ia:request"]);
+      if (!supported.has(type)) return;
+
+      const sendFailure = (code, message, extra = {}) => {
+        const responseType = type === "exerciseserver:ia" || type === "ia:request" ? "exerciseserver:ia:result" : (type === "ia:hello" || type === "ia:config" || type === "exerciseserver:ia:config" ? "ia:config" : "ia:result");
+        respondToFrame(event.source, {
+          type: responseType,
+          requestId,
+          ok: false,
+          code,
+          error: message,
+          ...extra,
+        });
+      };
+
+      const sendSuccess = (payload, responseTypeOverride) => {
+        const responseType = responseTypeOverride || (type === "exerciseserver:ia" || type === "ia:request" ? "exerciseserver:ia:result" : "ia:config");
+        respondToFrame(event.source, {
+          type: responseType,
+          requestId,
+          ok: true,
+          ...payload,
+        });
+      };
+
+      const emitConfigResponse = (cfg) => {
+        const ids = Array.isArray(cfg && cfg.providers) ? cfg.providers.map((p) => typeof p === "string" ? p : p.id) : [];
+        const replyPayload = {
+          version: 1,
+          ok: cfg && cfg.ok !== false,
+          status: cfg && cfg.status ? cfg.status : 200,
+          code: cfg && cfg.code ? cfg.code : undefined,
+          providers: ids,
+          defaultProvider: cfg && cfg.defaultProvider ? cfg.defaultProvider : (ids[0] || "none"),
+          images: !!(cfg && cfg.images === true),
+          maxImages: Math.min(cfg && cfg.maxImages ? cfg.maxImages : 3, 3),
+        };
+        if (cfg && cfg.error) replyPayload.error = cfg.error;
+        if (cfg && cfg.loginUrl) replyPayload.loginUrl = cfg.loginUrl;
+        sendSuccess(replyPayload, "ia:config");
+      };
+
+      if (type === "ia:hello" || type === "ia:config" || type === "exerciseserver:ia:config") {
+        fetch("/api/ia/config", { credentials: "same-origin" })
+          .then((r) => r.json().then((body) => ({ status: r.status, body })))
+          .then(({ status, body }) => {
+            if (status >= 400) {
+              const cfg = body && typeof body === "object" ? body : { ok: false, code: "request_failed", error: "No se pudo cargar la configuración de IA" };
+              emitConfigResponse({ ok: false, status, code: cfg.code || "request_failed", error: cfg.error || "No se pudo cargar la configuración de IA", loginUrl: cfg.loginUrl || "/login" });
+              return;
+            }
+            emitConfigResponse({ ok: true, status, ...body });
+          })
+          .catch((err) => emitConfigResponse({ ok: false, status: 500, code: "request_failed", error: String(err && err.message ? err.message : err), loginUrl: "/login" }));
+        return;
+      }
+
+      const payload = event.data.payload || {};
+      fetch("/api/ia", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then((r) => r.json().then((body) => ({ status: r.status, body })))
+        .then(({ status, body }) => {
+          if (status >= 400) {
+            sendFailure(body && body.code ? body.code : "request_failed", body && body.error ? body.error : "No se pudo consultar la IA");
+            return;
+          }
+          sendSuccess({ data: body });
+        })
+        .catch((err) => sendFailure("request_failed", String(err && err.message ? err.message : err)));
+    };
+
+    window.addEventListener("message", handleExerciseMessage);
   }
 
   // ---------- admin: tag suggestions ----------
