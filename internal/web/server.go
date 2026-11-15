@@ -1194,6 +1194,19 @@ func (s *Server) callAI(provider, model, prompt, system, key string, temperature
 	}
 }
 
+func maskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 6 {
+		return key[:min(3, len(key))] + "..."
+	}
+	if len(key) <= 10 {
+		return key[:3] + "..." + key[len(key)-3:]
+	}
+	return key[:3] + "..." + key[len(key)-3:]
+}
+
 func (s *Server) callOpenAI(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
 	content := []any{}
 	for _, img := range images {
@@ -1223,10 +1236,13 @@ func (s *Server) callOpenAI(model, prompt, system, key string, temperature float
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
+	log.Printf("[ai] OpenAI request: model=%s prompt_len=%d system=%t temperature=%v key_preview=%s", model, len(prompt), system != "", temperature, maskAPIKey(key))
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		log.Printf("[ai] OpenAI request failed: model=%s err=%v key_preview=%s", model, err, maskAPIKey(key))
 		return "", err
 	}
+	log.Printf("[ai] OpenAI response: model=%s status=%s key_preview=%s", model, resp.Status, maskAPIKey(key))
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
@@ -1278,10 +1294,13 @@ func (s *Server) callGemini(model, prompt, system, key string, temperature float
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	log.Printf("[ai] Gemini request: model=%s prompt_len=%d system=%t temperature=%v key_preview=%s", model, len(prompt), system != "", temperature, maskAPIKey(key))
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		log.Printf("[ai] Gemini request failed: model=%s err=%v key_preview=%s", model, err, maskAPIKey(key))
 		return "", err
 	}
+	log.Printf("[ai] Gemini response: model=%s status=%s key_preview=%s", model, resp.Status, maskAPIKey(key))
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
@@ -1340,10 +1359,13 @@ func (s *Server) callClaude(model, prompt, system, key string, temperature float
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", key)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	log.Printf("[ai] Claude request: model=%s prompt_len=%d system=%t temperature=%v key_preview=%s", model, len(prompt), system != "", temperature, maskAPIKey(key))
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		log.Printf("[ai] Claude request failed: model=%s err=%v key_preview=%s", model, err, maskAPIKey(key))
 		return "", err
 	}
+	log.Printf("[ai] Claude response: model=%s status=%s key_preview=%s", model, resp.Status, maskAPIKey(key))
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
