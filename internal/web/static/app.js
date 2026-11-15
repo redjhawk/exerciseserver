@@ -101,10 +101,16 @@
       const type = event.data.type;
       const requestId = event.data.requestId || null;
       const supported = new Set(["exerciseserver:ia", "exerciseserver:ia:config", "ia:hello", "ia:config", "ia:request"]);
-      if (!supported.has(type)) return;
+      if (!supported.has(type)) {
+        console.warn("[exercise-bridge] Ignored unsupported message", { type, requestId, data: event.data });
+        return;
+      }
+
+      console.debug("[exercise-bridge] Message received", { type, requestId, origin: event.origin, payload: event.data.payload || null });
 
       const sendFailure = (code, message, extra = {}) => {
         const responseType = type === "exerciseserver:ia" || type === "ia:request" ? "exerciseserver:ia:result" : (type === "ia:hello" || type === "ia:config" || type === "exerciseserver:ia:config" ? "ia:config" : "ia:result");
+        console.warn("[exercise-bridge] Sending failure response", { type, requestId, code, message, extra });
         respondToFrame(event.source, {
           type: responseType,
           requestId,
@@ -117,6 +123,7 @@
 
       const sendSuccess = (payload, responseTypeOverride) => {
         const responseType = responseTypeOverride || (type === "exerciseserver:ia" || type === "ia:request" ? "exerciseserver:ia:result" : "ia:config");
+        console.debug("[exercise-bridge] Sending success response", { type, requestId, responseType, payload });
         respondToFrame(event.source, {
           type: responseType,
           requestId,
@@ -143,9 +150,11 @@
       };
 
       if (type === "ia:hello" || type === "ia:config" || type === "exerciseserver:ia:config") {
+        console.debug("[exercise-bridge] Fetching IA config", { type, requestId });
         fetch("/api/ia/config", { credentials: "same-origin" })
           .then((r) => r.json().then((body) => ({ status: r.status, body })))
           .then(({ status, body }) => {
+            console.debug("[exercise-bridge] IA config response", { type, requestId, status, body });
             if (status >= 400) {
               const cfg = body && typeof body === "object" ? body : { ok: false, code: "request_failed", error: "No se pudo cargar la configuración de IA" };
               emitConfigResponse({ ok: false, status, code: cfg.code || "request_failed", error: cfg.error || "No se pudo cargar la configuración de IA", loginUrl: cfg.loginUrl || "/login" });
@@ -153,11 +162,16 @@
             }
             emitConfigResponse({ ok: true, status, ...body });
           })
-          .catch((err) => emitConfigResponse({ ok: false, status: 500, code: "request_failed", error: String(err && err.message ? err.message : err), loginUrl: "/login" }));
+          .catch((err) => {
+            const message = String(err && err.message ? err.message : err);
+            console.error("[exercise-bridge] Error fetching IA config", { type, requestId, error: message });
+            emitConfigResponse({ ok: false, status: 500, code: "request_failed", error: message, loginUrl: "/login" });
+          });
         return;
       }
 
       const payload = event.data.payload || {};
+      console.debug("[exercise-bridge] Sending IA request", { type, requestId, payload });
       fetch("/api/ia", {
         method: "POST",
         credentials: "same-origin",
@@ -166,13 +180,18 @@
       })
         .then((r) => r.json().then((body) => ({ status: r.status, body })))
         .then(({ status, body }) => {
+          console.debug("[exercise-bridge] IA request response", { type, requestId, status, body });
           if (status >= 400) {
             sendFailure(body && body.code ? body.code : "request_failed", body && body.error ? body.error : "No se pudo consultar la IA");
             return;
           }
           sendSuccess({ data: body });
         })
-        .catch((err) => sendFailure("request_failed", String(err && err.message ? err.message : err)));
+        .catch((err) => {
+          const message = String(err && err.message ? err.message : err);
+          console.error("[exercise-bridge] Error sending IA request", { type, requestId, payload, error: message });
+          sendFailure("request_failed", message);
+        });
     };
 
     window.addEventListener("message", handleExerciseMessage);
