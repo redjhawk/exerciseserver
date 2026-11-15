@@ -48,6 +48,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 main.wide { max-width: none; }
 .muted, .hint { color: var(--muted); }
 .hint { font-size: .9rem; }
+.guide-block { margin-top: 1.25rem; }
 
 .topbar {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -126,7 +127,10 @@ form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; mar
 .card .desc { margin: 0 0 6px; color: var(--muted); font-size: .9rem; }
 .meta { display: flex; flex-wrap: wrap; gap: 4px; }
 .tag, .level { font-size: .8rem; padding: 2px 8px; border-radius: 999px; background: var(--tag); color: var(--tag-text); white-space: nowrap; }
+.tag.ok { background: #dff7ea; color: #1a5c3b; border: 1px solid #8dd7ad; }
+.tag.warn { background: #fff7d6; color: #6b4e00; border: 1px solid #f0d98d; }
 .level { background: var(--level); color: var(--level-text); font-weight: 600; }
+.key-legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
 .empty { text-align: center; color: var(--muted); padding: 30px; }
 
 /* viewer */

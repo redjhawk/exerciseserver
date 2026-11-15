@@ -37,6 +37,7 @@ type User struct {
 type UserAIConfig struct {
 	Provider string
 	APIKey   string
+	Model    string
 	Forced   bool
 }
 
@@ -83,9 +84,11 @@ CREATE TABLE IF NOT EXISTS users (
 	created_at INTEGER NOT NULL,
 	ai_provider TEXT NOT NULL DEFAULT 'none',
 	ai_api_key TEXT NOT NULL DEFAULT '',
+	ai_model TEXT NOT NULL DEFAULT '',
 	ai_force INTEGER NOT NULL DEFAULT 0,
 	ai_forced_provider TEXT NOT NULL DEFAULT 'none',
-	ai_forced_api_key TEXT NOT NULL DEFAULT ''
+	ai_forced_api_key TEXT NOT NULL DEFAULT '',
+	ai_forced_model TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
@@ -144,7 +147,7 @@ func ensureUserAIColumns(db *sql.DB) error {
 		return err
 	}
 	defer rows.Close()
-	var hasProvider, hasKey, hasForce, hasForcedProvider, hasForcedKey bool
+	var hasProvider, hasKey, hasModel, hasForce, hasForcedProvider, hasForcedKey, hasForcedModel bool
 	for rows.Next() {
 		var cid, notNull, pk int
 		var name, colType, dfltValue sql.NullString
@@ -156,12 +159,16 @@ func ensureUserAIColumns(db *sql.DB) error {
 			hasProvider = true
 		case "ai_api_key":
 			hasKey = true
+		case "ai_model":
+			hasModel = true
 		case "ai_force":
 			hasForce = true
 		case "ai_forced_provider":
 			hasForcedProvider = true
 		case "ai_forced_api_key":
 			hasForcedKey = true
+		case "ai_forced_model":
+			hasForcedModel = true
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -177,6 +184,11 @@ func ensureUserAIColumns(db *sql.DB) error {
 			return err
 		}
 	}
+	if !hasModel {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_model TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	if !hasForce {
 		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_force INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
@@ -189,6 +201,11 @@ func ensureUserAIColumns(db *sql.DB) error {
 	}
 	if !hasForcedKey {
 		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_forced_api_key TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !hasForcedModel {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_forced_model TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}
@@ -364,33 +381,72 @@ func (s *Store) GetUser(id int64) (User, error) {
 	return u, err
 }
 
-func (s *Store) SetUserAI(id int64, provider, apiKey string) error {
+func validateAIKey(provider, apiKey string) error {
 	provider = NormalizeAIProvider(provider)
 	apiKey = strings.TrimSpace(apiKey)
-	if provider != "none" && apiKey == "" {
+	if provider == "none" {
+		return nil
+	}
+	if apiKey == "" {
 		return errors.New("falta la clave de la IA")
+	}
+	lower := strings.ToLower(apiKey)
+	switch provider {
+	case "openai":
+		if strings.HasPrefix(lower, "aiza") || strings.HasPrefix(lower, "sk-ant-") {
+			return errors.New("la clave no coincide con OpenAI; usa una clave que empiece por sk-")
+		}
+	case "gemini":
+		if strings.HasPrefix(lower, "sk-") || strings.HasPrefix(lower, "sk-ant-") {
+			return errors.New("la clave no coincide con Gemini; usa una clave tipo AIza...")
+		}
+	case "claude":
+		if strings.HasPrefix(lower, "sk-") && !strings.HasPrefix(lower, "sk-ant-") {
+			return errors.New("la clave no coincide con Claude; usa una clave que empiece por sk-ant-")
+		}
+	}
+	return nil
+}
+
+func (s *Store) SetUserAI(id int64, provider, apiKey string) error {
+	return s.SetUserAIWithModel(id, provider, apiKey, "")
+}
+
+func (s *Store) SetUserAIWithModel(id int64, provider, apiKey, model string) error {
+	provider = NormalizeAIProvider(provider)
+	apiKey = strings.TrimSpace(apiKey)
+	model = strings.TrimSpace(model)
+	if err := validateAIKey(provider, apiKey); err != nil {
+		return err
 	}
 	if provider == "none" {
 		apiKey = ""
+		model = ""
 	}
-	_, err := s.db.Exec(`UPDATE users SET ai_provider=?, ai_api_key=? WHERE id=?`, provider, apiKey, id)
+	_, err := s.db.Exec(`UPDATE users SET ai_provider=?, ai_api_key=?, ai_model=? WHERE id=?`, provider, apiKey, model, id)
 	return err
 }
 
 func (s *Store) SetUserAIFixed(id int64, fixed bool, provider, apiKey string) error {
+	return s.SetUserAIFixedWithModel(id, fixed, provider, apiKey, "")
+}
+
+func (s *Store) SetUserAIFixedWithModel(id int64, fixed bool, provider, apiKey, model string) error {
 	provider = NormalizeAIProvider(provider)
 	apiKey = strings.TrimSpace(apiKey)
+	model = strings.TrimSpace(model)
 	if fixed {
-		if provider != "none" && apiKey == "" {
-			return errors.New("falta la clave de la IA")
+		if err := validateAIKey(provider, apiKey); err != nil {
+			return err
 		}
 		if provider == "none" {
 			apiKey = ""
+			model = ""
 		}
-		_, err := s.db.Exec(`UPDATE users SET ai_force=1, ai_forced_provider=?, ai_forced_api_key=? WHERE id=?`, provider, apiKey, id)
+		_, err := s.db.Exec(`UPDATE users SET ai_force=1, ai_forced_provider=?, ai_forced_api_key=?, ai_forced_model=? WHERE id=?`, provider, apiKey, model, id)
 		return err
 	}
-	_, err := s.db.Exec(`UPDATE users SET ai_force=0, ai_forced_provider='none', ai_forced_api_key='' WHERE id=?`, id)
+	_, err := s.db.Exec(`UPDATE users SET ai_force=0, ai_forced_provider='none', ai_forced_api_key='', ai_forced_model='' WHERE id=?`, id)
 	return err
 }
 
@@ -405,32 +461,35 @@ func (s *Store) IsUserAIFixed(id int64) (bool, error) {
 
 func (s *Store) GetUserAI(id int64) (UserAIConfig, error) {
 	var cfg UserAIConfig
-	err := s.db.QueryRow(`SELECT ai_provider, ai_api_key FROM users WHERE id=?`, id).Scan(&cfg.Provider, &cfg.APIKey)
+	err := s.db.QueryRow(`SELECT ai_provider, ai_api_key, ai_model FROM users WHERE id=?`, id).Scan(&cfg.Provider, &cfg.APIKey, &cfg.Model)
 	if errors.Is(err, sql.ErrNoRows) {
 		return cfg, ErrNotFound
 	}
 	cfg.Provider = NormalizeAIProvider(cfg.Provider)
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	cfg.Model = strings.TrimSpace(cfg.Model)
 	return cfg, err
 }
 
 func (s *Store) GetEffectiveUserAI(id int64) (UserAIConfig, error) {
 	var cfg UserAIConfig
 	var forced int
-	var forcedProvider, forcedAPIKey, personalProvider, personalAPIKey string
-	err := s.db.QueryRow(`SELECT ai_force, ai_forced_provider, ai_forced_api_key, ai_provider, ai_api_key FROM users WHERE id=?`, id).
-		Scan(&forced, &forcedProvider, &forcedAPIKey, &personalProvider, &personalAPIKey)
+	var forcedProvider, forcedAPIKey, forcedModel, personalProvider, personalAPIKey, personalModel string
+	err := s.db.QueryRow(`SELECT ai_force, ai_forced_provider, ai_forced_api_key, ai_forced_model, ai_provider, ai_api_key, ai_model FROM users WHERE id=?`, id).
+		Scan(&forced, &forcedProvider, &forcedAPIKey, &forcedModel, &personalProvider, &personalAPIKey, &personalModel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return cfg, ErrNotFound
 	}
 	if forced == 1 {
 		cfg.Provider = NormalizeAIProvider(forcedProvider)
 		cfg.APIKey = strings.TrimSpace(forcedAPIKey)
+		cfg.Model = strings.TrimSpace(forcedModel)
 		cfg.Forced = true
 		return cfg, nil
 	}
 	cfg.Provider = NormalizeAIProvider(personalProvider)
 	cfg.APIKey = strings.TrimSpace(personalAPIKey)
+	cfg.Model = strings.TrimSpace(personalModel)
 	cfg.Forced = false
 	return cfg, nil
 }

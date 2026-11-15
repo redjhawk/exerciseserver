@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -360,6 +361,123 @@ func TestUserCanSetOwnAIAndAdminCanForceIt(t *testing.T) {
 	forced, err := st.IsUserAIFixed(2)
 	if err != nil || !forced {
 		t.Fatalf("force flag: %v %v", forced, err)
+	}
+}
+
+func TestAIProviderKeyFormatValidation(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.SetUserAI(2, "openai", "AIza...fake-gemini-key"); err == nil {
+		t.Fatal("expected OpenAI key validation to reject Gemini key")
+	}
+	if err := st.SetUserAI(2, "gemini", "AIza...fake-gemini-key"); err != nil {
+		t.Fatalf("expected Gemini key format to be accepted: %v", err)
+	}
+	if err := st.SetUserAI(2, "claude", "sk-ant-api03-foo"); err != nil {
+		t.Fatalf("expected Claude key format to be accepted: %v", err)
+	}
+	if err := st.SetUserAI(2, "openai", "sk-proj-abc123"); err != nil {
+		t.Fatalf("expected OpenAI key format to be accepted: %v", err)
+	}
+}
+
+func TestAPIListProviderModels(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	st.SetUserAI(2, "gemini", "AIzaFakeKey1234567890")
+
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "generativelanguage.googleapis.com" && req.URL.Path == "/v1beta/models" {
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"models":[{"name":"models/gemini-2.0-flash"},{"name":"models/gemini-1.5-flash"}]}`))}, nil
+		}
+		return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.String())
+	})}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	kid := client(t)
+	login(t, kid, ts.URL, "nino", "1234")
+	resp, err := kid.PostForm(ts.URL+"/api/ia/models", url.Values{"provider": {"gemini"}, "api_key": {"AIzaFakeKey1234567890"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("models: %d %s", resp.StatusCode, string(b))
+	}
+	var v map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		t.Fatal(err)
+	}
+	if models, ok := v["models"].([]any); !ok || len(models) != 2 {
+		t.Fatalf("unexpected models payload: %#v", v)
+	}
+}
+
+func TestGeminiModelFallbackOnNotFound(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserAI(2, "gemini", "AIzaFakeKey1234567890"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/v1beta/models/gemini-2.5-flash:generateContent":
+			return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"message":"model not found"}}`))}, nil
+		case "/v1beta/models/gemini-2.0-flash:generateContent":
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"fallback ok"}]}}]}`))}, nil
+		default:
+			return &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":"unexpected"}`))}, nil
+		}
+	})}
+
+	text, err := srv.callGemini("gemini-2.5-flash", "hola", "", "AIzaFakeKey1234567890", 0, nil, false)
+	if err != nil {
+		t.Fatalf("fallback failed: %v", err)
+	}
+	if text != "fallback ok" {
+		t.Fatalf("unexpected fallback text: %q", text)
 	}
 }
 

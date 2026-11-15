@@ -10,7 +10,7 @@
   <form method="post" action="/mi-ia" class="row">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <label>Proveedor
-      <select name="provider" {{if .Data.Forced}}disabled{{end}}>
+      <select id="ai-provider" name="provider" {{if .Data.Forced}}disabled{{end}}>
         <option value="none" {{if eq .Data.Provider "none"}}selected{{end}}>Sin IA</option>
         <option value="openai" {{if eq .Data.Provider "openai"}}selected{{end}}>OpenAI</option>
         <option value="gemini" {{if eq .Data.Provider "gemini"}}selected{{end}}>Gemini</option>
@@ -18,25 +18,108 @@
       </select>
     </label>
     <label>Clave API
-      <input type="password" name="api_key" placeholder="clave API" autocomplete="off" size="24" {{if .Data.Forced}}disabled{{end}}>
+      <input id="ai-api-key" type="password" name="api_key" placeholder="clave API" autocomplete="off" size="24" value="{{.Data.APIKey}}" {{if .Data.Forced}}disabled{{end}}>
     </label>
+    <label>Modelo
+      <select id="ai-model" name="model" {{if .Data.Forced}}disabled{{end}}>
+        {{if .Data.Model}}
+        <option value="{{.Data.Model}}" selected>{{.Data.Model}}</option>
+        {{else if ne .Data.Provider "none"}}
+        <option value="{{defaultModel .Data.Provider}}" selected>{{defaultModel .Data.Provider}}</option>
+        {{else}}
+        <option value="">Sin modelo</option>
+        {{end}}
+      </select>
+    </label>
+    {{if not .Data.Forced}}<button id="load-ai-models" type="button" class="secondary">Cargar modelos</button>{{end}}
     {{if not .Data.Forced}}<button type="submit" class="primary">Guardar</button>{{end}}
   </form>
 
-  <div class="hint" style="margin-top: 1.25rem;">
+  <script>
+    (function () {
+      const provider = document.getElementById('ai-provider');
+      const apiKey = document.getElementById('ai-api-key');
+      const modelSelect = document.getElementById('ai-model');
+      const loadButton = document.getElementById('load-ai-models');
+      const csrf = document.querySelector('input[name="csrf"]').value;
+      const setOptions = (models, selected) => {
+        modelSelect.innerHTML = '';
+        if (!models || models.length === 0) {
+          const empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = 'Sin modelo';
+          modelSelect.appendChild(empty);
+          return;
+        }
+        models.forEach((model) => {
+          const option = document.createElement('option');
+          option.value = model;
+          option.textContent = model;
+          if (model === selected) option.selected = true;
+          modelSelect.appendChild(option);
+        });
+      };
+      const loadModels = () => {
+        const selectedProvider = provider.value;
+        const key = (apiKey.value || '').trim();
+        if (!selectedProvider || selectedProvider === 'none' || !key) {
+          setOptions([], '');
+          return;
+        }
+        const body = new URLSearchParams({ csrf, provider: selectedProvider, api_key: key });
+        fetch('/api/ia/models', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+          body: body.toString()
+        })
+          .then((r) => r.json().then((json) => ({ status: r.status, body: json })))
+          .then(({ status, body }) => {
+            if (status >= 400 || body.ok === false) {
+              throw new Error(body && body.error ? body.error : 'No se pudieron cargar los modelos');
+            }
+            const selected = modelSelect.value || body.defaultModel || '';
+            setOptions(Array.isArray(body.models) ? body.models : [], selected);
+          })
+          .catch((err) => {
+            const message = err && err.message ? err.message : String(err);
+            setOptions([], '');
+            window.alert(message);
+          });
+      };
+      provider.addEventListener('change', loadModels);
+      apiKey.addEventListener('input', () => {
+        if (provider.value && provider.value !== 'none' && apiKey.value.trim()) {
+          loadModels();
+        }
+      });
+      if (loadButton) loadButton.addEventListener('click', loadModels);
+      if (provider.value && provider.value !== 'none' && apiKey.value.trim()) {
+        loadModels();
+      }
+    })();
+  </script>
+
+  <div class="hint guide-block">
     <strong>Cómo configurar tu clave:</strong>
+    <div class="key-legend">
+      <span class="tag warn">OpenAI: normalmente de pago</span>
+      <span class="tag ok">Gemini: suele tener cuota gratuita</span>
+      <span class="tag warn">Claude: normalmente de pago</span>
+    </div>
     <ol>
       <li>Abre la página de IA desde la barra de navegación superior: <strong>IA</strong>.</li>
       <li>Elige el proveedor que quieras usar: <strong>OpenAI</strong>, <strong>Gemini</strong> o <strong>Claude</strong>.</li>
       <li>Entra en la cuenta del proveedor y crea o copia la clave API desde su panel de desarrolladores:</li>
       <ul>
-        <li><strong>OpenAI:</strong> <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI API Keys</a>.</li>
-        <li><strong>Gemini:</strong> <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</li>
-        <li><strong>Claude:</strong> <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</li>
+        <li><strong>OpenAI:</strong> debe empezar por <strong>sk-</strong> y suele ser de pago. <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI API Keys</a>.</li>
+        <li><strong>Gemini:</strong> debe empezar por <strong>AIza...</strong> y suele tener un nivel gratuito. <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</li>
+        <li><strong>Claude:</strong> debe empezar por <strong>sk-ant-</strong> y suele ser de pago. <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</li>
       </ul>
       <li>Pega la clave en el campo <strong>Clave API</strong> de esta pantalla.</li>
       <li>Guarda la configuración. La clave se almacena en el servidor, no en el navegador.</li>
     </ol>
+    <p>Si pegas una clave de otro proveedor en el campo equivocado, la aplicación rechazará la configuración para prevenir errores 401.</p>
     <p>Si un administrador fuerza una IA para tu cuenta, esa configuración tiene prioridad y la opción del usuario queda bloqueada.</p>
   </div>
 </section>

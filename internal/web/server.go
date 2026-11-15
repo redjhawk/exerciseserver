@@ -61,10 +61,11 @@ func New(st *store.Store, dataDir, version string) (*Server, error) {
 	s := &Server{store: st, filesDir: filesDir, version: version, pages: map[string]*template.Template{},
 		limiter: &loginLimiter{fails: map[string][]time.Time{}}, apiLimiter: &rateLimiter{byUser: map[int64][]time.Time{}}, httpClient: &http.Client{Timeout: 30 * time.Second}}
 	funcs := template.FuncMap{
-		"join":  strings.Join,
-		"size":  humanSize,
-		"date":  func(t time.Time) string { return t.Format("02/01/2006") },
-		"lower": strings.ToLower,
+		"join":        strings.Join,
+		"size":        humanSize,
+		"date":        func(t time.Time) string { return t.Format("02/01/2006") },
+		"lower":       strings.ToLower,
+		"defaultModel": defaultModel,
 		"tagsAttr": func(tags []string) string {
 			l := make([]string, len(tags))
 			for i, t := range tags {
@@ -124,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/ia/config", s.apiAuth(s.apiConfig))
 	mux.HandleFunc("POST /api/ia", s.apiAuth(s.apiIA))
 	mux.HandleFunc("GET /api/ia/providers", s.apiAuth(s.apiProviders))
+	mux.HandleFunc("POST /api/ia/models", s.apiAuth(s.apiModels))
 
 	mux.HandleFunc("GET /admin/niveles", s.admin(s.adminLevels))
 	mux.HandleFunc("POST /admin/niveles", s.admin(s.adminLevelCreate))
@@ -878,7 +880,13 @@ func (s *Server) userAIPage(w http.ResponseWriter, r *http.Request, sess store.S
 }
 
 func (s *Server) userAIUpdate(w http.ResponseWriter, r *http.Request, sess store.Session) {
-	if err := s.store.SetUserAI(sess.User.ID, r.FormValue("provider"), r.FormValue("api_key")); err != nil {
+	provider := r.FormValue("provider")
+	apiKey := r.FormValue("api_key")
+	model := strings.TrimSpace(r.FormValue("model"))
+	if provider != "none" && model == "" {
+		model = defaultModel(provider)
+	}
+	if err := s.store.SetUserAIWithModel(sess.User.ID, provider, apiKey, model); err != nil {
 		redirectMsg(w, r, "/mi-ia", err, "")
 		return
 	}
@@ -1044,14 +1052,20 @@ func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request, sess store.Se
 	cfg, err := s.store.GetEffectiveUserAI(sess.User.ID)
 	providers := []iaProviderInfo{}
 	defaultProvider := ""
+	defaultModelName := ""
 	if err == nil && cfg.Provider != "none" && cfg.APIKey != "" {
-		providers = append(providers, iaProviderInfo{ID: cfg.Provider, Models: defaultModels(cfg.Provider), DefaultModel: defaultModel(cfg.Provider)})
+		defaultModelName = cfg.Model
+		if defaultModelName == "" {
+			defaultModelName = defaultModel(cfg.Provider)
+		}
+		providers = append(providers, iaProviderInfo{ID: cfg.Provider, Models: defaultModels(cfg.Provider), DefaultModel: defaultModelName})
 		defaultProvider = cfg.Provider
 	}
 	resp := map[string]any{
 		"ok":              true,
 		"providers":       providers,
 		"defaultProvider": defaultProvider,
+		"defaultModel":    defaultModelName,
 		"images":          len(providers) > 0,
 		"maxImages":       apiMaxImages,
 		"maxBodyBytes":    apiMaxBodyBytes,
@@ -1066,11 +1080,124 @@ func defaultModels(provider string) []string {
 	case "openai":
 		return []string{"gpt-4o-mini"}
 	case "gemini":
-		return []string{"gemini-2.5-flash", "gemini-2.5-pro"}
+		return []string{"gemini-2.0-flash", "gemini-1.5-flash"}
 	case "claude":
 		return []string{"claude-sonnet-5-5"}
 	default:
 		return nil
+	}
+}
+
+func fetchProviderModels(provider, apiKey string, client *http.Client) ([]string, error) {
+	provider = store.NormalizeAIProvider(provider)
+	apiKey = strings.TrimSpace(apiKey)
+	if provider == "none" || apiKey == "" {
+		return nil, fmt.Errorf("faltan datos de configuración")
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	var req *http.Request
+	var err error
+	var models []string
+	switch provider {
+	case "openai":
+		req, err = http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("OpenAI %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		}
+		var out struct {
+			Data []struct { ID string `json:"id"` } `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, err
+		}
+		for _, item := range out.Data {
+			if item.ID != "" {
+				models = append(models, item.ID)
+			}
+		}
+		if len(models) == 0 {
+			return defaultModels(provider), nil
+		}
+		return models, nil
+	case "gemini":
+		url := "https://generativelanguage.googleapis.com/v1beta/models?key=" + url.QueryEscape(apiKey)
+		req, err = http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("Gemini %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		}
+		var out struct {
+			Models []struct { Name string `json:"name"` } `json:"models"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, err
+		}
+		for _, item := range out.Models {
+			if item.Name == "" {
+				continue
+			}
+			name := strings.TrimPrefix(item.Name, "models/")
+			if name != "" && !strings.Contains(name, "embed") && !strings.Contains(name, "tts") && !strings.Contains(name, "imagen") {
+				models = append(models, name)
+			}
+		}
+		if len(models) == 0 {
+			return defaultModels(provider), nil
+		}
+		return models, nil
+	case "claude":
+		req, err = http.NewRequest(http.MethodGet, "https://api.anthropic.com/v1/models", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("Claude %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		}
+		var out struct {
+			Data []struct { ID string `json:"id"` } `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, err
+		}
+		for _, item := range out.Data {
+			if item.ID != "" {
+				models = append(models, item.ID)
+			}
+		}
+		if len(models) == 0 {
+			return defaultModels(provider), nil
+		}
+		return models, nil
+	default:
+		return nil, fmt.Errorf("proveedor no soportado: %s", provider)
 	}
 }
 
@@ -1079,7 +1206,7 @@ func defaultModel(provider string) string {
 	case "openai":
 		return "gpt-4o-mini"
 	case "gemini":
-		return "gemini-2.5-flash"
+		return "gemini-2.0-flash"
 	case "claude":
 		return "claude-sonnet-5-5"
 	default:
@@ -1162,11 +1289,20 @@ func (s *Server) apiIA(w http.ResponseWriter, r *http.Request, sess store.Sessio
 	}
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
+		model = cfg.Model
+	}
+	if model == "" {
 		model = defaultModel(provider)
 	}
 	if model == "" || !contains(defaultModels(provider), model) {
-		writeAPIError(w, http.StatusBadRequest, "unsupported_model", "Modelo no soportado", "")
-		return
+		if models, err := fetchProviderModels(provider, key, s.httpClient); err == nil && len(models) > 0 {
+			if !contains(models, model) && model != "" {
+				model = models[0]
+			}
+		} else if model != "" {
+			writeAPIError(w, http.StatusBadRequest, "unsupported_model", "Modelo no soportado", "")
+			return
+		}
 	}
 	if err := s.rateLimit(sess.User.ID); err != nil {
 		writeAPIError(w, http.StatusTooManyRequests, "rate_limited", "Demasiadas peticiones", "")
@@ -1179,6 +1315,32 @@ func (s *Server) apiIA(w http.ResponseWriter, r *http.Request, sess store.Sessio
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{"text": text})
+}
+
+func (s *Server) apiModels(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	provider := r.FormValue("provider")
+	apiKey := r.FormValue("api_key")
+	provider = store.NormalizeAIProvider(provider)
+	if provider == "none" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_provider", "Selecciona un proveedor", "")
+		return
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		writeAPIError(w, http.StatusBadRequest, "missing_key", "Falta la clave de la IA", "")
+		return
+	}
+	models, err := fetchProviderModels(provider, apiKey, s.httpClient)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, "models_error", err.Error(), "")
+		return
+	}
+	resp := map[string]any{"ok": true, "models": models, "defaultModel": defaultModel(provider)}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) callAI(provider, model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
@@ -1265,67 +1427,86 @@ func (s *Server) callOpenAI(model, prompt, system, key string, temperature float
 }
 
 func (s *Server) callGemini(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
-	parts := make([]map[string]any, 0, len(images)+1)
-	for _, img := range images {
-		parts = append(parts, map[string]any{"inline_data": map[string]any{"mime_type": img.MimeType, "data": img.Data}})
-	}
-	parts = append(parts, map[string]any{"text": prompt})
-	body := map[string]any{"contents": []map[string]any{{"parts": parts}}}
-	if system != "" {
-		body["system_instruction"] = map[string]any{"parts": []map[string]any{{"text": system}}}
-	}
-	if temperature > 0 || forceJSON {
-		cfg := map[string]any{}
-		if temperature > 0 {
-			cfg["temperature"] = temperature
+	models := []string{model}
+	for _, candidate := range defaultModels("gemini") {
+		if candidate != model && !contains(models, candidate) {
+			models = append(models, candidate)
 		}
-		if forceJSON {
-			cfg["responseMimeType"] = "application/json"
+	}
+	var lastErr error
+	for i, candidate := range models {
+		parts := make([]map[string]any, 0, len(images)+1)
+		for _, img := range images {
+			parts = append(parts, map[string]any{"inline_data": map[string]any{"mime_type": img.MimeType, "data": img.Data}})
 		}
-		body["generationConfig"] = cfg
+		parts = append(parts, map[string]any{"text": prompt})
+		body := map[string]any{"contents": []map[string]any{{"parts": parts}}}
+		if system != "" {
+			body["system_instruction"] = map[string]any{"parts": []map[string]any{{"text": system}}}
+		}
+		if temperature > 0 || forceJSON {
+			cfg := map[string]any{}
+			if temperature > 0 {
+				cfg["temperature"] = temperature
+			}
+			if forceJSON {
+				cfg["responseMimeType"] = "application/json"
+			}
+			body["generationConfig"] = cfg
+		}
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return "", err
+		}
+		url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", candidate, url.QueryEscape(key))
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		log.Printf("[ai] Gemini request: model=%s prompt_len=%d system=%t temperature=%v key_preview=%s", candidate, len(prompt), system != "", temperature, maskAPIKey(key))
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			log.Printf("[ai] Gemini request failed: model=%s err=%v key_preview=%s", candidate, err, maskAPIKey(key))
+			return "", err
+		}
+		log.Printf("[ai] Gemini response: model=%s status=%s key_preview=%s", candidate, resp.Status, maskAPIKey(key))
+		if resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("Gemini %s: %s", resp.Status, strings.TrimSpace(string(b)))
+			if resp.StatusCode == http.StatusNotFound && i < len(models)-1 {
+				log.Printf("[ai] Gemini model %s unavailable; retrying with %s", candidate, models[i+1])
+				continue
+			}
+			return "", lastErr
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return "", err
+		}
+		if len(out.Candidates) == 0 {
+			return "", fmt.Errorf("respuesta vacía")
+		}
+		var text strings.Builder
+		for _, p := range out.Candidates[0].Content.Parts {
+			text.WriteString(p.Text)
+		}
+		return text.String(), nil
 	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return "", err
+	if lastErr != nil {
+		return "", lastErr
 	}
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, url.QueryEscape(key))
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	log.Printf("[ai] Gemini request: model=%s prompt_len=%d system=%t temperature=%v key_preview=%s", model, len(prompt), system != "", temperature, maskAPIKey(key))
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		log.Printf("[ai] Gemini request failed: model=%s err=%v key_preview=%s", model, err, maskAPIKey(key))
-		return "", err
-	}
-	log.Printf("[ai] Gemini response: model=%s status=%s key_preview=%s", model, resp.Status, maskAPIKey(key))
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Gemini %s: %s", resp.Status, strings.TrimSpace(string(b)))
-	}
-	var out struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
-	}
-	if len(out.Candidates) == 0 {
-		return "", fmt.Errorf("respuesta vacía")
-	}
-	var text strings.Builder
-	for _, p := range out.Candidates[0].Content.Parts {
-		text.WriteString(p.Text)
-	}
-	return text.String(), nil
+	return "", fmt.Errorf("respuesta vacía")
 }
 
 func (s *Server) callClaude(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
