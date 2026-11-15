@@ -24,11 +24,18 @@ type Store struct {
 }
 
 type User struct {
-	ID        int64
-	Username  string
-	IsAdmin   bool
-	Active    bool
-	CreatedAt time.Time
+	ID         int64
+	Username   string
+	IsAdmin    bool
+	Active     bool
+	CreatedAt  time.Time
+	AIProvider string
+	AIKey      string
+}
+
+type UserAIConfig struct {
+	Provider string
+	APIKey   string
 }
 
 type Session struct {
@@ -71,7 +78,9 @@ CREATE TABLE IF NOT EXISTS users (
 	password_hash TEXT NOT NULL,
 	is_admin INTEGER NOT NULL DEFAULT 0,
 	active INTEGER NOT NULL DEFAULT 1,
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	ai_provider TEXT NOT NULL DEFAULT 'none',
+	ai_api_key TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
@@ -117,7 +126,62 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	if err := ensureUserAIColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("schema ai: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+func ensureUserAIColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(users)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var hasProvider, hasKey bool
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, colType, dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name.String == "ai_provider" {
+			hasProvider = true
+		}
+		if name.String == "ai_api_key" {
+			hasKey = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasProvider {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_provider TEXT NOT NULL DEFAULT 'none'`); err != nil {
+			return err
+		}
+	}
+	if !hasKey {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func NormalizeAIProvider(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "none", "off", "disabled":
+		return "none"
+	case "openai":
+		return "openai"
+	case "gemini":
+		return "gemini"
+	case "claude":
+		return "claude"
+	default:
+		return "none"
+	}
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -191,7 +255,7 @@ func (s *Store) Authenticate(username, password string) (User, bool) {
 }
 
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id,username,is_admin,active,created_at FROM users ORDER BY username`)
+	rows, err := s.db.Query(`SELECT id,username,is_admin,active,created_at,ai_provider FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -200,10 +264,11 @@ func (s *Store) ListUsers() ([]User, error) {
 	for rows.Next() {
 		var u User
 		var c int64
-		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &u.AIProvider); err != nil {
 			return nil, err
 		}
 		u.CreatedAt = time.Unix(c, 0)
+		u.AIProvider = NormalizeAIProvider(u.AIProvider)
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -249,13 +314,38 @@ func (s *Store) CountActiveAdmins() (int, error) {
 func (s *Store) GetUser(id int64) (User, error) {
 	var u User
 	var c int64
-	err := s.db.QueryRow(`SELECT id,username,is_admin,active,created_at FROM users WHERE id=?`, id).
-		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c)
+	err := s.db.QueryRow(`SELECT id,username,is_admin,active,created_at,ai_provider FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &u.AIProvider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrNotFound
 	}
 	u.CreatedAt = time.Unix(c, 0)
+	u.AIProvider = NormalizeAIProvider(u.AIProvider)
 	return u, err
+}
+
+func (s *Store) SetUserAI(id int64, provider, apiKey string) error {
+	provider = NormalizeAIProvider(provider)
+	apiKey = strings.TrimSpace(apiKey)
+	if provider != "none" && apiKey == "" {
+		return errors.New("falta la clave de la IA")
+	}
+	if provider == "none" {
+		apiKey = ""
+	}
+	_, err := s.db.Exec(`UPDATE users SET ai_provider=?, ai_api_key=? WHERE id=?`, provider, apiKey, id)
+	return err
+}
+
+func (s *Store) GetUserAI(id int64) (UserAIConfig, error) {
+	var cfg UserAIConfig
+	err := s.db.QueryRow(`SELECT ai_provider, ai_api_key FROM users WHERE id=?`, id).Scan(&cfg.Provider, &cfg.APIKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return cfg, ErrNotFound
+	}
+	cfg.Provider = NormalizeAIProvider(cfg.Provider)
+	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	return cfg, err
 }
 
 // ---------- sessions ----------

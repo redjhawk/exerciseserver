@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -42,11 +44,13 @@ const (
 )
 
 type Server struct {
-	store    *store.Store
-	filesDir string
-	version  string
-	pages    map[string]*template.Template
-	limiter  *loginLimiter
+	store      *store.Store
+	filesDir   string
+	version    string
+	pages      map[string]*template.Template
+	limiter    *loginLimiter
+	apiLimiter *rateLimiter
+	httpClient *http.Client
 }
 
 func New(st *store.Store, dataDir, version string) (*Server, error) {
@@ -55,7 +59,7 @@ func New(st *store.Store, dataDir, version string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{store: st, filesDir: filesDir, version: version, pages: map[string]*template.Template{},
-		limiter: &loginLimiter{fails: map[string][]time.Time{}}}
+		limiter: &loginLimiter{fails: map[string][]time.Time{}}, apiLimiter: &rateLimiter{byUser: map[int64][]time.Time{}}, httpClient: &http.Client{Timeout: 30 * time.Second}}
 	funcs := template.FuncMap{
 		"join":  strings.Join,
 		"size":  humanSize,
@@ -112,7 +116,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/usuarios", s.admin(s.adminUserCreate))
 	mux.HandleFunc("POST /admin/usuarios/{id}", s.admin(s.adminUserFlags))
 	mux.HandleFunc("POST /admin/usuarios/{id}/password", s.admin(s.adminUserPassword))
+	mux.HandleFunc("POST /admin/usuarios/{id}/ia", s.admin(s.adminUserAI))
 	mux.HandleFunc("POST /admin/usuarios/{id}/borrar", s.admin(s.adminUserDelete))
+
+	mux.HandleFunc("GET /api/ia/config", s.apiAuth(s.apiConfig))
+	mux.HandleFunc("POST /api/ia", s.apiAuth(s.apiIA))
+	mux.HandleFunc("GET /api/ia/providers", s.apiAuth(s.apiProviders))
 
 	mux.HandleFunc("GET /admin/niveles", s.admin(s.adminLevels))
 	mux.HandleFunc("POST /admin/niveles", s.admin(s.adminLevelCreate))
@@ -765,6 +774,16 @@ func (s *Server) adminUserPassword(w http.ResponseWriter, r *http.Request, _ sto
 	redirectMsg(w, r, "/admin/usuarios", err, "Contraseña cambiada")
 }
 
+func (s *Server) adminUserAI(w http.ResponseWriter, r *http.Request, _ store.Session) {
+	id, ok := pathID(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	err := s.store.SetUserAI(id, r.FormValue("provider"), r.FormValue("api_key"))
+	redirectMsg(w, r, "/admin/usuarios", err, "IA guardada")
+}
+
 func (s *Server) adminUserDelete(w http.ResponseWriter, r *http.Request, sess store.Session) {
 	id, ok := pathID(r)
 	if !ok {
@@ -849,4 +868,466 @@ func (s *Server) adminTagDelete(w http.ResponseWriter, r *http.Request, _ store.
 	}
 	err := s.store.DeleteTag(id)
 	redirectMsg(w, r, "/admin/etiquetas", err, "Etiqueta borrada")
+}
+
+const (
+	apiMaxBodyBytes = 10 << 20
+	apiMaxImages    = 3
+)
+
+type iaImage struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
+type iaRequest struct {
+	Prompt      string    `json:"prompt"`
+	System      string    `json:"system"`
+	Provider    string    `json:"provider"`
+	Model       string    `json:"model"`
+	Temperature float64   `json:"temperature"`
+	Images      []iaImage `json:"images"`
+	JSON        bool      `json:"json"`
+}
+
+type iaProviderInfo struct {
+	ID           string   `json:"id"`
+	Models       []string `json:"models,omitempty"`
+	DefaultModel string   `json:"defaultModel,omitempty"`
+}
+
+type apiErrorBody struct {
+	OK       bool   `json:"ok"`
+	Code     string `json:"code"`
+	Error    string `json:"error"`
+	LoginURL string `json:"loginUrl,omitempty"`
+}
+
+func (s *Server) apiProviders(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cfg, err := s.store.GetUserAI(sess.User.ID)
+	providers := []iaProviderInfo{}
+	defaultProvider := ""
+	if err == nil && cfg.Provider != "none" && cfg.APIKey != "" {
+		providers = append(providers, iaProviderInfo{ID: cfg.Provider, Models: defaultModels(cfg.Provider), DefaultModel: defaultModel(cfg.Provider)})
+		defaultProvider = cfg.Provider
+	}
+	resp := map[string]any{
+		"ok":              true,
+		"providers":       providers,
+		"defaultProvider": defaultProvider,
+		"images":          true,
+		"maxImages":       apiMaxImages,
+		"maxBodyBytes":    apiMaxBodyBytes,
+		"loginUrl":        "/login",
+	}
+	if len(providers) == 0 {
+		resp["providers"] = []iaProviderInfo{}
+		resp["defaultProvider"] = ""
+		resp["images"] = false
+		resp["maxImages"] = apiMaxImages
+		resp["maxBodyBytes"] = apiMaxBodyBytes
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	cfg, err := s.store.GetUserAI(sess.User.ID)
+	providers := []iaProviderInfo{}
+	defaultProvider := ""
+	if err == nil && cfg.Provider != "none" && cfg.APIKey != "" {
+		providers = append(providers, iaProviderInfo{ID: cfg.Provider, Models: defaultModels(cfg.Provider), DefaultModel: defaultModel(cfg.Provider)})
+		defaultProvider = cfg.Provider
+	}
+	resp := map[string]any{
+		"ok":              true,
+		"providers":       providers,
+		"defaultProvider": defaultProvider,
+		"images":          len(providers) > 0,
+		"maxImages":       apiMaxImages,
+		"maxBodyBytes":    apiMaxBodyBytes,
+		"loginUrl":        "/login",
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func defaultModels(provider string) []string {
+	switch store.NormalizeAIProvider(provider) {
+	case "openai":
+		return []string{"gpt-4o-mini"}
+	case "gemini":
+		return []string{"gemini-2.5-flash", "gemini-2.5-pro"}
+	case "claude":
+		return []string{"claude-sonnet-5-5"}
+	default:
+		return nil
+	}
+}
+
+func defaultModel(provider string) string {
+	switch store.NormalizeAIProvider(provider) {
+	case "openai":
+		return "gpt-4o-mini"
+	case "gemini":
+		return "gemini-2.5-flash"
+	case "claude":
+		return "claude-sonnet-5-5"
+	default:
+		return ""
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, status int, code, msg, loginURL string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if loginURL != "" {
+		w.Header().Set("X-Login-Url", loginURL)
+	}
+	if status == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", "60")
+	}
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(apiErrorBody{OK: false, Code: code, Error: msg, LoginURL: loginURL})
+}
+
+func (s *Server) apiAuth(h authedHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := s.session(r)
+		if !ok {
+			writeAPIError(w, http.StatusUnauthorized, "unauthenticated", "Sesión no válida", "/login")
+			return
+		}
+		h(w, r, sess)
+	}
+}
+
+func (s *Server) apiIA(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	if r.ContentLength > apiMaxBodyBytes {
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "too_large", "Cuerpo demasiado grande", "")
+		return
+	}
+	if r.Body == nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "JSON inválido", "")
+		return
+	}
+	var req iaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "JSON inválido", "")
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		writeAPIError(w, http.StatusBadRequest, "empty_prompt", "prompt vacío", "")
+		return
+	}
+	cfg, err := s.store.GetUserAI(sess.User.ID)
+	if err != nil || cfg.Provider == "none" || cfg.APIKey == "" {
+		writeAPIError(w, http.StatusBadRequest, "no_config", "Sin configuración de IA para este usuario", "")
+		return
+	}
+	provider := store.NormalizeAIProvider(req.Provider)
+	if provider == "none" {
+		provider = cfg.Provider
+	}
+	if provider != cfg.Provider {
+		writeAPIError(w, http.StatusBadRequest, "unsupported_provider", "Proveedor no soportado", "")
+		return
+	}
+	key := strings.TrimSpace(cfg.APIKey)
+	if key == "" {
+		writeAPIError(w, http.StatusBadRequest, "no_config", "Sin configuración de IA para este usuario", "")
+		return
+	}
+	if len(req.Images) > apiMaxImages {
+		writeAPIError(w, http.StatusBadRequest, "invalid_image", "Demasiadas imágenes", "")
+		return
+	}
+	for _, img := range req.Images {
+		if !isSupportedImageType(img.MimeType) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_image", "Tipo de imagen no admitido", "")
+			return
+		}
+		if _, err := base64.StdEncoding.DecodeString(img.Data); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_image", "Base64 inválido", "")
+			return
+		}
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = defaultModel(provider)
+	}
+	if model == "" || !contains(defaultModels(provider), model) {
+		writeAPIError(w, http.StatusBadRequest, "unsupported_model", "Modelo no soportado", "")
+		return
+	}
+	if err := s.rateLimit(sess.User.ID); err != nil {
+		writeAPIError(w, http.StatusTooManyRequests, "rate_limited", "Demasiadas peticiones", "")
+		return
+	}
+	text, err := s.callAI(provider, model, strings.TrimSpace(req.Prompt), req.System, key, req.Temperature, req.Images, req.JSON)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, "ai_error", err.Error(), "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"text": text})
+}
+
+func (s *Server) callAI(provider, model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
+	switch provider {
+	case "openai":
+		return s.callOpenAI(model, prompt, system, key, temperature, images, forceJSON)
+	case "gemini":
+		return s.callGemini(model, prompt, system, key, temperature, images, forceJSON)
+	case "claude":
+		return s.callClaude(model, prompt, system, key, temperature, images, forceJSON)
+	default:
+		return "", fmt.Errorf("proveedor no soportado: %s", provider)
+	}
+}
+
+func (s *Server) callOpenAI(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
+	content := []any{}
+	for _, img := range images {
+		content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + img.MimeType + ";base64," + img.Data}})
+	}
+	content = append(content, map[string]any{"type": "text", "text": prompt})
+	body := map[string]any{
+		"model":    model,
+		"messages": []map[string]any{{"role": "user", "content": content}},
+	}
+	if temperature > 0 {
+		body["temperature"] = temperature
+	}
+	if system != "" {
+		body["messages"] = []map[string]any{{"role": "system", "content": system}, {"role": "user", "content": content}}
+	}
+	if forceJSON {
+		body["response_format"] = map[string]any{"type": "json_object"}
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("OpenAI %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content any `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if len(out.Choices) == 0 {
+		return "", fmt.Errorf("respuesta vacía")
+	}
+	return renderContent(out.Choices[0].Message.Content)
+}
+
+func (s *Server) callGemini(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
+	parts := make([]map[string]any, 0, len(images)+1)
+	for _, img := range images {
+		parts = append(parts, map[string]any{"inline_data": map[string]any{"mime_type": img.MimeType, "data": img.Data}})
+	}
+	parts = append(parts, map[string]any{"text": prompt})
+	body := map[string]any{"contents": []map[string]any{{"parts": parts}}}
+	if system != "" {
+		body["system_instruction"] = map[string]any{"parts": []map[string]any{{"text": system}}}
+	}
+	if temperature > 0 || forceJSON {
+		cfg := map[string]any{}
+		if temperature > 0 {
+			cfg["temperature"] = temperature
+		}
+		if forceJSON {
+			cfg["responseMimeType"] = "application/json"
+		}
+		body["generationConfig"] = cfg
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, url.QueryEscape(key))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("Gemini %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if len(out.Candidates) == 0 {
+		return "", fmt.Errorf("respuesta vacía")
+	}
+	var text strings.Builder
+	for _, p := range out.Candidates[0].Content.Parts {
+		text.WriteString(p.Text)
+	}
+	return text.String(), nil
+}
+
+func (s *Server) callClaude(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {
+	content := make([]map[string]any, 0, len(images)+1)
+	for _, img := range images {
+		content = append(content, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": img.MimeType, "data": img.Data}})
+	}
+	content = append(content, map[string]any{"type": "text", "text": prompt})
+	body := map[string]any{
+		"model":      model,
+		"max_tokens": 1024,
+		"messages":   []map[string]any{{"role": "user", "content": content}},
+	}
+	if temperature > 0 {
+		body["temperature"] = temperature
+	}
+	if system != "" {
+		body["system"] = system
+	}
+	if forceJSON {
+		body["system"] = "Tu réponds uniquement avec du JSON valide, sans texte autour."
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", key)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("Claude %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	var text strings.Builder
+	for _, p := range out.Content {
+		text.WriteString(p.Text)
+	}
+	return text.String(), nil
+}
+
+func renderContent(raw any) (string, error) {
+	switch v := raw.(type) {
+	case string:
+		return v, nil
+	case []any:
+		var out strings.Builder
+		for _, p := range v {
+			m, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+			if txt, ok := m["text"].(string); ok {
+				out.WriteString(txt)
+			}
+		}
+		return out.String(), nil
+	default:
+		return "", fmt.Errorf("contenido no entendible")
+	}
+}
+
+func isSupportedImageType(mime string) bool {
+	switch strings.TrimSpace(strings.ToLower(mime)) {
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
+		return true
+	default:
+		return false
+	}
+}
+
+func contains(items []string, s string) bool {
+	for _, v := range items {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+type rateLimiter struct {
+	mu     sync.Mutex
+	byUser map[int64][]time.Time
+}
+
+func (l *rateLimiter) allow(userID int64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.byUser == nil {
+		l.byUser = map[int64][]time.Time{}
+	}
+	now := time.Now()
+	cut := now.Add(-time.Hour)
+	keep := l.byUser[userID][:0]
+	for _, t := range l.byUser[userID] {
+		if t.After(cut) {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) >= 30 {
+		return fmt.Errorf("rate limited")
+	}
+	keep = append(keep, now)
+	l.byUser[userID] = keep
+	return nil
+}
+
+func (s *Server) rateLimit(userID int64) error {
+	if s.apiLimiter == nil {
+		s.apiLimiter = &rateLimiter{byUser: map[int64][]time.Time{}}
+	}
+	return s.apiLimiter.allow(userID)
 }

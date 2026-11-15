@@ -15,7 +15,7 @@
 
 <section class="panel">
   <table class="list">
-    <thead><tr><th>Usuario</th><th>Permisos</th><th>Nueva contraseña</th><th></th></tr></thead>
+    <thead><tr><th>Usuario</th><th>Permisos</th><th>IA</th><th>Nueva contraseña</th><th></th></tr></thead>
     <tbody>
     {{range .Data}}
     <tr class="{{if not .Active}}inactive{{end}}">
@@ -26,6 +26,21 @@
           <label class="check"><input type="checkbox" name="active" value="1" {{if .Active}}checked{{end}}> Activo</label>
           <label class="check"><input type="checkbox" name="is_admin" value="1" {{if .IsAdmin}}checked{{end}}> Admin</label>
           <button type="submit" class="small">Guardar</button>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="/admin/usuarios/{{.ID}}/ia" class="inline">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <label>
+            <select name="provider">
+              <option value="none" {{if eq .AIProvider "none"}}selected{{end}}>Sin IA</option>
+              <option value="openai" {{if eq .AIProvider "openai"}}selected{{end}}>OpenAI</option>
+              <option value="gemini" {{if eq .AIProvider "gemini"}}selected{{end}}>Gemini</option>
+              <option value="claude" {{if eq .AIProvider "claude"}}selected{{end}}>Claude</option>
+            </select>
+          </label>
+          <input type="password" name="api_key" placeholder="clave API" autocomplete="off" size="12">
+          <button type="submit" class="small">Guardar IA</button>
         </form>
       </td>
       <td>
@@ -47,6 +62,6 @@
     {{end}}
     </tbody>
   </table>
-  <p class="hint">Desactivar un usuario o cambiarle la contraseña cierra sus sesiones abiertas.</p>
+  <p class="hint">Desactivar un usuario o cambiarle la contraseña cierra sus sesiones abiertas. La clave se guarda solo en el servidor y no llega al navegador.</p>
 </section>
 {{end}}

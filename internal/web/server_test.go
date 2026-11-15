@@ -2,6 +2,8 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -142,6 +144,163 @@ func TestFlow(t *testing.T) {
 		t.Fatalf("demote last admin: %s", loc)
 	}
 }
+
+func TestUserAIProviderAndProxy(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host != "generativelanguage.googleapis.com" {
+			t.Fatalf("unexpected host: %s", req.URL.Host)
+		}
+		body := `{"candidates":[{"content":{"parts":[{"text":"respuesta OK"}]}}]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+	srv.httpClient = fakeClient
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	admin := client(t)
+	login(t, admin, ts.URL, "admin", "secret-admin")
+	csrf := csrfToken(t, admin, ts.URL)
+	resp, err := admin.PostForm(ts.URL+"/admin/usuarios/2/ia", url.Values{
+		"csrf":     {csrf},
+		"provider": {"gemini"},
+		"api_key":  {"super-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save AI config: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	cfg, err := st.GetUserAI(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider != "gemini" || cfg.APIKey != "super-secret" {
+		t.Fatalf("stored cfg: %+v", cfg)
+	}
+
+	kid := client(t)
+	login(t, kid, ts.URL, "nino", "1234")
+	resp, err = kid.Post(ts.URL+"/api/ia", "application/json", strings.NewReader(`{"prompt":"responde con una frase"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("AI proxy: %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "respuesta OK") {
+		t.Fatalf("proxy response: %s", string(body))
+	}
+}
+
+func TestAPIv2Contract(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserAI(2, "gemini", "super-secret"); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"candidates":[{"content":{"parts":[{"text":"respuesta OK"}]}}]}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	anon := client(t)
+	resp, err := anon.Get(ts.URL + "/api/ia/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("config should require auth: %d", resp.StatusCode)
+	}
+	var errBody map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&errBody); err != nil {
+		t.Fatalf("decode auth error: %v", err)
+	}
+	if errBody["code"] != "unauthenticated" || errBody["loginUrl"] != "/login" {
+		t.Fatalf("unauth response: %#v", errBody)
+	}
+	resp.Body.Close()
+
+	kid := client(t)
+	login(t, kid, ts.URL, "nino", "1234")
+	resp, err = kid.Get(ts.URL + "/api/ia/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("config status: %d", resp.StatusCode)
+	}
+	var cfg map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if cfg["defaultProvider"] != "gemini" || cfg["images"] != true {
+		t.Fatalf("config incorrect: %#v", cfg)
+	}
+
+	resp, err = kid.Post(ts.URL+"/api/ia", "application/json", strings.NewReader(`{"prompt":"responde con una frase","images":[{"mimeType":"image/jpeg","data":"AQID"}],"json":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("ia call status: %d body=%s", resp.StatusCode, string(b))
+	}
+	var ia map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&ia); err != nil {
+		t.Fatalf("decode IA response: %v", err)
+	}
+	if ia["text"] != "respuesta OK" {
+		t.Fatalf("IA response: %#v", ia)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestSafeNext(t *testing.T) {
 	for in, want := range map[string]string{"": "/", "/ver/1": "/ver/1", "//evil.com": "/", "https://evil.com": "/", "/\\evil.com": "/"} {
