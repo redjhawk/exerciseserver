@@ -29,22 +29,24 @@
         </form>
       </td>
       <td>
+        {{$aiProvider := .AIProvider}}
+        {{$aiModel := .AIModel}}
         <form method="post" action="/admin/usuarios/{{.ID}}/ia" class="inline">
           <input type="hidden" name="csrf" value="{{$csrf}}">
           <label class="check"><input type="checkbox" name="force" value="1" {{if .AIForce}}checked{{end}}> Forzar</label>
           <label>
             <select name="provider">
-              <option value="none" {{if eq .AIProvider "none"}}selected{{end}}>Sin IA</option>
-              <option value="openai" {{if eq .AIProvider "openai"}}selected{{end}}>OpenAI</option>
-              <option value="gemini" {{if eq .AIProvider "gemini"}}selected{{end}}>Gemini</option>
-              <option value="claude" {{if eq .AIProvider "claude"}}selected{{end}}>Claude</option>
+              <option value="none" {{if eq $aiProvider "none"}}selected{{end}}>Sin IA</option>
+              <option value="openai" {{if eq $aiProvider "openai"}}selected{{end}}>OpenAI</option>
+              <option value="gemini" {{if eq $aiProvider "gemini"}}selected{{end}}>Gemini</option>
+              <option value="claude" {{if eq $aiProvider "claude"}}selected{{end}}>Claude</option>
             </select>
           </label>
           <label>
             <select name="model">
-              {{if ne .AIProvider "none"}}
-                {{range modelOptions .AIProvider $.AIModel}}
-                <option value="{{.}}" {{if eq $.AIModel .}}selected{{end}}>{{.}}</option>
+              {{if ne $aiProvider "none"}}
+                {{range modelOptions $aiProvider $aiModel}}
+                <option value="{{.}}" {{if eq $aiModel .}}selected{{end}}>{{.}}</option>
                 {{end}}
               {{else}}
               <option value="">Sin modelo</option>

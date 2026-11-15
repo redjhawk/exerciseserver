@@ -487,6 +487,54 @@ func TestSavedCustomModelStaysSelectedAfterReload(t *testing.T) {
 	}
 }
 
+func TestAdminUsersPageRendersWithoutInternalError(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserAIWithModel(2, "gemini", "AIzaFakeKey1234567890", "gemini-2.5-flash"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	admin := client(t)
+	login(t, admin, ts.URL, "admin", "secret-admin")
+	resp, err := admin.Get(ts.URL + "/admin/usuarios")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("admin users page status: %d %s", resp.StatusCode, string(b))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(body)
+	if !strings.Contains(page, "Usuarios") {
+		t.Fatalf("admin users page did not render: %s", page)
+	}
+	if !strings.Contains(page, "gemini-2.5-flash") {
+		t.Fatalf("admin users page missing selected model: %s", page)
+	}
+}
+
 func TestAIProviderKeyFormatValidation(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
