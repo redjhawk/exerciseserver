@@ -181,11 +181,25 @@ func cacheStatic(next http.Handler) http.Handler {
 type authedHandler func(http.ResponseWriter, *http.Request, store.Session)
 
 func (s *Server) session(r *http.Request) (store.Session, bool) {
-	c, err := r.Cookie(cookieName)
-	if err != nil || c.Value == "" {
-		return store.Session{}, false
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+		if sess, ok := s.store.GetSession(c.Value); ok {
+			return sess, true
+		}
 	}
-	return s.store.GetSession(c.Value)
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		token := strings.TrimSpace(auth[len("Bearer "):])
+		if token != "" {
+			if sess, ok := s.store.GetSession(token); ok {
+				return sess, true
+			}
+		}
+	}
+	if token := strings.TrimSpace(r.Header.Get("X-Session-Token")); token != "" {
+		if sess, ok := s.store.GetSession(token); ok {
+			return sess, true
+		}
+	}
+	return store.Session{}, false
 }
 
 func (s *Server) auth(h authedHandler) http.HandlerFunc {

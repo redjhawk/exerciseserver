@@ -22,5 +22,22 @@
     </label>
     {{if not .Data.Forced}}<button type="submit" class="primary">Guardar</button>{{end}}
   </form>
+
+  <div class="hint" style="margin-top: 1.25rem;">
+    <strong>Cómo configurar tu clave:</strong>
+    <ol>
+      <li>Abre la página de IA desde la barra de navegación superior: <strong>IA</strong>.</li>
+      <li>Elige el proveedor que quieras usar: <strong>OpenAI</strong>, <strong>Gemini</strong> o <strong>Claude</strong>.</li>
+      <li>Entra en la cuenta del proveedor y crea o copia la clave API desde su panel de desarrolladores:</li>
+      <ul>
+        <li><strong>OpenAI:</strong> <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI API Keys</a>.</li>
+        <li><strong>Gemini:</strong> <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</li>
+        <li><strong>Claude:</strong> <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</li>
+      </ul>
+      <li>Pega la clave en el campo <strong>Clave API</strong> de esta pantalla.</li>
+      <li>Guarda la configuración. La clave se almacena en el servidor, no en el navegador.</li>
+    </ol>
+    <p>Si un administrador fuerza una IA para tu cuenta, esa configuración tiene prioridad y la opción del usuario queda bloqueada.</p>
+  </div>
 </section>
 {{end}}

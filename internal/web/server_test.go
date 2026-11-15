@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/redjhawk/exerciseserver/internal/store"
 )
@@ -359,6 +360,49 @@ func TestUserCanSetOwnAIAndAdminCanForceIt(t *testing.T) {
 	forced, err := st.IsUserAIFixed(2)
 	if err != nil || !forced {
 		t.Fatalf("force flag: %v %v", forced, err)
+	}
+}
+
+func TestAPIAuthBearerToken(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserAI(2, "gemini", "super-secret"); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := st.CreateSession(2, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/ia/config", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("bearer auth status: %d body=%s", resp.StatusCode, string(b))
 	}
 }
 
