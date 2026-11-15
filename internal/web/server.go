@@ -66,6 +66,8 @@ func New(st *store.Store, dataDir, version string) (*Server, error) {
 		"date":         func(t time.Time) string { return t.Format("02/01/2006") },
 		"lower":        strings.ToLower,
 		"defaultModel": defaultModel,
+		"defaultModels": defaultModels,
+		"maskKey":      maskAPIKey,
 		"tagsAttr": func(tags []string) string {
 			l := make([]string, len(tags))
 			for i, t := range tags {
@@ -857,13 +859,14 @@ func (s *Server) adminUserAI(w http.ResponseWriter, r *http.Request, _ store.Ses
 	}
 	provider := r.FormValue("provider")
 	apiKey := r.FormValue("api_key")
+	model := strings.TrimSpace(r.FormValue("model"))
 	force := r.FormValue("force") == "1"
 	if force {
-		err := s.store.SetUserAIFixed(id, true, provider, apiKey)
+		err := s.store.SetUserAIFixedWithModel(id, true, provider, apiKey, model)
 		redirectMsg(w, r, "/admin/usuarios", err, "IA forzada")
 		return
 	}
-	err := s.store.SetUserAI(id, provider, apiKey)
+	err := s.store.SetUserAIWithModel(id, provider, apiKey, model)
 	if err == nil {
 		err = s.store.SetUserAIFixed(id, false, "", "")
 	}
@@ -883,6 +886,24 @@ func (s *Server) userAIUpdate(w http.ResponseWriter, r *http.Request, sess store
 	provider := r.FormValue("provider")
 	apiKey := r.FormValue("api_key")
 	model := strings.TrimSpace(r.FormValue("model"))
+	current, err := s.store.GetEffectiveUserAI(sess.User.ID)
+	if err == nil && current.Forced {
+		if provider == "" {
+			provider = current.Provider
+		}
+		if apiKey == "" {
+			apiKey = current.APIKey
+		}
+		if provider != "none" && model == "" {
+			model = current.Model
+		}
+		if err := s.store.SetUserAIFixedWithModel(sess.User.ID, true, provider, apiKey, model); err != nil {
+			redirectMsg(w, r, "/mi-ia", err, "")
+			return
+		}
+		redirectMsg(w, r, "/mi-ia", nil, "IA forzada actualizada")
+		return
+	}
 	if provider != "none" && model == "" {
 		model = defaultModel(provider)
 	}
@@ -1366,13 +1387,10 @@ func maskAPIKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	if len(key) <= 6 {
-		return key[:min(3, len(key))] + "..."
+	if len(key) <= 4 {
+		return strings.Repeat("*", len(key))
 	}
-	if len(key) <= 10 {
-		return key[:3] + "..." + key[len(key)-3:]
-	}
-	return key[:3] + "..." + key[len(key)-3:]
+	return key[:2] + strings.Repeat("*", len(key)-4) + key[len(key)-2:]
 }
 
 func (s *Server) callOpenAI(model, prompt, system, key string, temperature float64, images []iaImage, forceJSON bool) (string, error) {

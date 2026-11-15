@@ -40,7 +40,21 @@
               <option value="claude" {{if eq .AIProvider "claude"}}selected{{end}}>Claude</option>
             </select>
           </label>
-          <input type="password" name="api_key" placeholder="clave API" autocomplete="off" size="12">
+          <label>
+            <select name="model">
+              {{if ne .AIProvider "none"}}
+                {{range defaultModels .AIProvider}}
+                <option value="{{.}}" {{if eq $.AIModel .}}selected{{end}}>{{.}}</option>
+                {{end}}
+              {{else}}
+              <option value="">Sin modelo</option>
+              {{end}}
+            </select>
+          </label>
+          <span class="token-field">
+            <input type="password" name="api_key" value="{{maskKey .AIKey}}" placeholder="clave API" autocomplete="off" size="12">
+            <button type="button" class="small toggle-token" data-toggle-token="">Ver token</button>
+          </span>
           <button type="submit" class="small">Guardar IA</button>
         </form>
       </td>

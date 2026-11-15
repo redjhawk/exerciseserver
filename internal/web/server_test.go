@@ -385,6 +385,67 @@ func TestUserCanSetOwnAIAndAdminCanForceIt(t *testing.T) {
 	}
 }
 
+func TestForcedAISettingsMaskSecretAndKeepModelSelectable(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	admin := client(t)
+	login(t, admin, ts.URL, "admin", "secret-admin")
+	csrfAdmin := csrfToken(t, admin, ts.URL)
+	resp, err := admin.PostForm(ts.URL+"/admin/usuarios/2/ia", url.Values{"csrf": {csrfAdmin}, "provider": {"gemini"}, "api_key": {"forced-key-1234"}, "model": {"gemini-2.0-flash"}, "force": {"1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("admin force AI: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	cfg, err := st.GetEffectiveUserAI(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "gemini-2.0-flash" {
+		t.Fatalf("forced model not stored: %+v", cfg)
+	}
+	if got := maskAPIKey("forced-key-1234"); !strings.HasPrefix(got, "fo") || !strings.HasSuffix(got, "34") || !strings.Contains(got, "*") {
+		t.Fatalf("maskAPIKey mismatch: got %q", got)
+	}
+
+	kid := client(t)
+	login(t, kid, ts.URL, "nino", "1234")
+	resp, err = kid.Get(ts.URL + "/mi-ia")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(body)
+	if !strings.Contains(page, "id=\"ai-model\"") || strings.Contains(page, "id=\"ai-model\" disabled") {
+		t.Fatalf("forced user should still be able to choose a model: %s", page)
+	}
+	if !strings.Contains(page, "value=\"fo") || !strings.Contains(page, "34\"") {
+		t.Fatalf("masked key not rendered: %s", page)
+	}
+}
+
 func TestAIProviderKeyFormatValidation(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "db.sqlite"))

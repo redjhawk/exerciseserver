@@ -133,11 +133,23 @@
 
     aiProvider.addEventListener("change", loadModels);
     aiApiKey.addEventListener("input", () => {
-      if (aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
+      if (!aiApiKey.disabled && aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
     });
     if (aiLoadButton) aiLoadButton.addEventListener("click", loadModels);
-    if (aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
+    if (!aiApiKey.disabled && aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
   }
+
+  // ---------- token visibility ----------
+  document.querySelectorAll("[data-toggle-token]").forEach((button) => {
+    const targetId = button.dataset.toggleToken;
+    const input = targetId ? document.getElementById(targetId) : button.closest(".token-field")?.querySelector("input");
+    if (!input) return;
+    button.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      button.textContent = show ? "Ocultar" : "Ver token";
+    });
+  });
 
   // ---------- viewer ----------
   const back = $("[data-back]");

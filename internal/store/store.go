@@ -31,6 +31,7 @@ type User struct {
 	CreatedAt  time.Time
 	AIProvider string
 	AIKey      string
+	AIModel    string
 	AIForce    bool
 }
 
@@ -298,7 +299,7 @@ func (s *Store) Authenticate(username, password string) (User, bool) {
 }
 
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id,username,is_admin,active,created_at,ai_force,ai_provider,ai_forced_provider FROM users ORDER BY username`)
+	rows, err := s.db.Query(`SELECT id,username,is_admin,active,created_at,ai_force,ai_provider,ai_forced_provider,ai_forced_api_key,ai_forced_model,ai_api_key,ai_model FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -308,16 +309,20 @@ func (s *Store) ListUsers() ([]User, error) {
 		var u User
 		var c int64
 		var forced int
-		var personalProvider, forcedProvider sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &forced, &personalProvider, &forcedProvider); err != nil {
+		var personalProvider, forcedProvider, personalAPIKey, forcedAPIKey, personalModel, forcedModel sql.NullString
+		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &forced, &personalProvider, &forcedProvider, &forcedAPIKey, &forcedModel, &personalAPIKey, &personalModel); err != nil {
 			return nil, err
 		}
 		u.CreatedAt = time.Unix(c, 0)
 		u.AIForce = forced == 1
 		if u.AIForce {
 			u.AIProvider = NormalizeAIProvider(forcedProvider.String)
+			u.AIKey = strings.TrimSpace(forcedAPIKey.String)
+			u.AIModel = strings.TrimSpace(forcedModel.String)
 		} else {
 			u.AIProvider = NormalizeAIProvider(personalProvider.String)
+			u.AIKey = strings.TrimSpace(personalAPIKey.String)
+			u.AIModel = strings.TrimSpace(personalModel.String)
 		}
 		out = append(out, u)
 	}
@@ -365,9 +370,9 @@ func (s *Store) GetUser(id int64) (User, error) {
 	var u User
 	var c int64
 	var forced int
-	var personalProvider, forcedProvider sql.NullString
-	err := s.db.QueryRow(`SELECT id,username,is_admin,active,created_at,ai_force,ai_provider,ai_forced_provider FROM users WHERE id=?`, id).
-		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &forced, &personalProvider, &forcedProvider)
+	var personalProvider, forcedProvider, personalAPIKey, forcedAPIKey, personalModel, forcedModel sql.NullString
+	err := s.db.QueryRow(`SELECT id,username,is_admin,active,created_at,ai_force,ai_provider,ai_forced_provider,ai_forced_api_key,ai_forced_model,ai_api_key,ai_model FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &forced, &personalProvider, &forcedProvider, &forcedAPIKey, &forcedModel, &personalAPIKey, &personalModel)
 	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrNotFound
 	}
@@ -375,8 +380,12 @@ func (s *Store) GetUser(id int64) (User, error) {
 	u.AIForce = forced == 1
 	if u.AIForce {
 		u.AIProvider = NormalizeAIProvider(forcedProvider.String)
+		u.AIKey = strings.TrimSpace(forcedAPIKey.String)
+		u.AIModel = strings.TrimSpace(forcedModel.String)
 	} else {
 		u.AIProvider = NormalizeAIProvider(personalProvider.String)
+		u.AIKey = strings.TrimSpace(personalAPIKey.String)
+		u.AIModel = strings.TrimSpace(personalModel.String)
 	}
 	return u, err
 }

@@ -17,22 +17,23 @@
         <option value="claude" {{if eq .Data.Provider "claude"}}selected{{end}}>Claude</option>
       </select>
     </label>
-    <label>Clave API
-      <input id="ai-api-key" type="password" name="api_key" placeholder="clave API" autocomplete="off" size="24" value="{{.Data.APIKey}}" {{if .Data.Forced}}disabled{{end}}>
+    <label class="token-field">Clave API
+      <input id="ai-api-key" type="password" name="api_key" placeholder="clave API" autocomplete="off" size="24" value="{{maskKey .Data.APIKey}}" {{if .Data.Forced}}disabled{{end}}>
+      <button type="button" class="small toggle-token" data-toggle-token="ai-api-key">Ver token</button>
     </label>
     <label>Modelo
-      <select id="ai-model" name="model" {{if .Data.Forced}}disabled{{end}}>
-        {{if .Data.Model}}
-        <option value="{{.Data.Model}}" selected>{{.Data.Model}}</option>
-        {{else if ne .Data.Provider "none"}}
-        <option value="{{defaultModel .Data.Provider}}" selected>{{defaultModel .Data.Provider}}</option>
+      <select id="ai-model" name="model">
+        {{if ne .Data.Provider "none"}}
+          {{range defaultModels .Data.Provider}}
+          <option value="{{.}}" {{if eq $.Data.Model .}}selected{{end}}>{{.}}</option>
+          {{end}}
         {{else}}
         <option value="">Sin modelo</option>
         {{end}}
       </select>
     </label>
     {{if not .Data.Forced}}<button id="load-ai-models" type="button" class="secondary">Cargar modelos</button>{{end}}
-    {{if not .Data.Forced}}<button type="submit" class="primary">Guardar</button>{{end}}
+    <button type="submit" class="primary">Guardar</button>
   </form>
 
 
