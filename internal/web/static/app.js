@@ -76,6 +76,69 @@
     apply();
   }
 
+  // ---------- IA model loader ----------
+  const aiProvider = $("#ai-provider");
+  const aiApiKey = $("#ai-api-key");
+  const aiModel = $("#ai-model");
+  const aiLoadButton = $("#load-ai-models");
+  const aiCsrfInput = document.querySelector('input[name="csrf"]');
+  if (aiProvider && aiApiKey && aiModel && aiCsrfInput) {
+    const setOptions = (models, selected) => {
+      aiModel.innerHTML = "";
+      if (!models || models.length === 0) {
+        const empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = "Sin modelo";
+        aiModel.appendChild(empty);
+        return;
+      }
+      models.forEach((model) => {
+        const option = document.createElement("option");
+        option.value = model;
+        option.textContent = model;
+        if (model === selected) option.selected = true;
+        aiModel.appendChild(option);
+      });
+    };
+
+    const loadModels = () => {
+      const selectedProvider = aiProvider.value;
+      const key = (aiApiKey.value || "").trim();
+      if (!selectedProvider || selectedProvider === "none" || !key) {
+        setOptions([], "");
+        return;
+      }
+      const csrf = aiCsrfInput.value;
+      const body = new URLSearchParams({ csrf, provider: selectedProvider, api_key: key });
+      fetch("/api/ia/models", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+        body: body.toString(),
+      })
+        .then((r) => r.json().then((json) => ({ status: r.status, body: json })))
+        .then(({ status, body }) => {
+          if (status >= 400 || body.ok === false) {
+            throw new Error(body && body.error ? body.error : "No se pudieron cargar los modelos");
+          }
+          const selected = aiModel.value || body.defaultModel || "";
+          setOptions(Array.isArray(body.models) ? body.models : [], selected);
+        })
+        .catch((err) => {
+          const message = err && err.message ? err.message : String(err);
+          setOptions([], "");
+          window.alert(message);
+        });
+    };
+
+    aiProvider.addEventListener("change", loadModels);
+    aiApiKey.addEventListener("input", () => {
+      if (aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
+    });
+    if (aiLoadButton) aiLoadButton.addEventListener("click", loadModels);
+    if (aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
+  }
+
   // ---------- viewer ----------
   const back = $("[data-back]");
   if (back && document.referrer) {

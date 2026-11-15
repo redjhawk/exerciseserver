@@ -148,6 +148,27 @@ func TestFlow(t *testing.T) {
 	}
 }
 
+func TestUserAIPageCSPAllowsRequiredExecution(t *testing.T) {
+	ts, st := newTestServer(t)
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	c := client(t)
+	login(t, c, ts.URL, "admin", "secret-admin")
+	resp, err := c.Get(ts.URL + "/mi-ia")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mi-ia: %d", resp.StatusCode)
+	}
+	csp := resp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src") || !strings.Contains(csp, "'unsafe-inline'") {
+		t.Fatalf("CSP missing inline scripts allowance: %q", csp)
+	}
+}
+
 func TestReplaceUploadedFileKeepsSameRecord(t *testing.T) {
 	ts, st := newTestServer(t)
 	if err := st.SetAdminPassword("secret-admin"); err != nil {
