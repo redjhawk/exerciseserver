@@ -95,6 +95,30 @@
       source.postMessage({ ...payload, source: "exerciseserver" }, "*");
     };
 
+    const readJSONResponse = async (response, label) => {
+      const raw = await response.text();
+      const preview = raw.trim().slice(0, 300);
+      console.debug(`[exercise-bridge] ${label} raw response`, {
+        status: response.status,
+        contentType: response.headers.get("content-type"),
+        preview,
+      });
+
+      if (!raw || !raw.trim()) {
+        return { status: response.status, body: { ok: false, code: "empty_response", error: "La respuesta estaba vacía." } };
+      }
+
+      if (preview.startsWith("<")) {
+        throw new Error(`La API devolvió HTML en lugar de JSON (${response.status}). Respuesta: ${preview}`);
+      }
+
+      try {
+        return { status: response.status, body: JSON.parse(raw) };
+      } catch (err) {
+        throw new Error(`La API devolvió un cuerpo no JSON (${response.status}). Respuesta: ${preview}`);
+      }
+    };
+
     const handleExerciseMessage = (event) => {
       if (!event || !event.data || typeof event.data !== "object") return;
       if (event.source !== frame.contentWindow) return;
@@ -152,7 +176,7 @@
       if (type === "ia:hello" || type === "ia:config" || type === "exerciseserver:ia:config") {
         console.debug("[exercise-bridge] Fetching IA config", { type, requestId });
         fetch("/api/ia/config", { credentials: "same-origin" })
-          .then((r) => r.json().then((body) => ({ status: r.status, body })))
+          .then((r) => readJSONResponse(r, "IA config"))
           .then(({ status, body }) => {
             console.debug("[exercise-bridge] IA config response", { type, requestId, status, body });
             if (status >= 400) {
@@ -178,7 +202,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       })
-        .then((r) => r.json().then((body) => ({ status: r.status, body })))
+        .then((r) => readJSONResponse(r, "IA request"))
         .then(({ status, body }) => {
           console.debug("[exercise-bridge] IA request response", { type, requestId, status, body });
           if (status >= 400) {
