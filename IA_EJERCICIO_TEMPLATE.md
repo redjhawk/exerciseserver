@@ -76,7 +76,9 @@ window.parent.postMessage({
 
 ### 3.2. Petición de IA
 
-Desde el iframe:
+Desde el iframe se envía un `payload` completo. La ventana padre no lo modifica ni lo corta: hace exactamente `JSON.stringify(payload)` y lo manda al backend.
+
+Esto significa que los campos disponibles son los que el ejercicio haya incluido:
 
 ```javascript
 const requestId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
@@ -85,11 +87,19 @@ window.parent.postMessage({
   requestId,
   payload: {
     prompt: 'Explica esta pregunta paso a paso para un niño de 8 años.',
+    system: 'Eres un profesor paciente que explica para niños de 8 años.',
     provider: 'openai',
-    model: 'gpt-4o-mini'
+    model: 'gpt-4o-mini',
+    temperature: 0.4,
+    images: [
+      { mimeType: 'image/jpeg', data: 'BASE64_DE_LA_IMAGEN' }
+    ],
+    json: false
   }
 }, '*');
 ```
+
+Si el payload solo incluye `prompt`, `provider` y `model`, entonces el backend solo recibirá esos tres campos. El dictado con texto funcionará, pero funciones con imagen no, porque `images` debe estar presente y ser válido.
 
 La respuesta esperada por el iframe es:
 
@@ -238,7 +248,226 @@ La IA puede usarse para cualquier tipo de ejercicio, siempre que la lógica del 
 - ejercicios abiertos con pista guiada
 - creación de actividades personalizadas
 
-## 6. Prompt recomendado para que la IA genere un ejercicio
+## 6. Regla de payload: qué se reenvía exactamente
+
+La ventana padre no limita ni recorta la petición por defecto. Reenvía el payload que recibe del iframe tal cual al backend, con este flujo:
+
+```text
+iframe -> window.parent.postMessage({ type: 'ia:request', payload: {...} }, '*')
+      -> parent escucha y hace fetch('/api/ia', { body: JSON.stringify(payload) })
+      -> backend recibe exactamente esos campos
+```
+
+Eso quiere decir que:
+
+- `prompt` se reenvía si está presente
+- `provider` se reenvía si está presente
+- `model` se reenvía si está presente
+- `system` se reenvía si está presente
+- `temperature` se reenvía si está presente
+- `images` se reenvía si está presente
+- `json` se reenvía si está presente
+
+Si un ejercicio genera un payload minimalista como este:
+
+```javascript
+{
+  prompt: 'Explica esta imagen',
+  provider: 'openai',
+  model: 'gpt-4o-mini'
+}
+```
+
+entonces el backend solo recibirá esos campos. La IA podrá responder texto, pero no podrá analizar imágenes porque `images` no existe.
+
+Para uso con foto o multimodal, el payload debe incluir explícitamente:
+
+```javascript
+{
+  prompt: '¿Qué ves en esta imagen?',
+  provider: 'openai',
+  model: 'gpt-4o-mini',
+  images: [{ mimeType: 'image/jpeg', data: 'BASE64...' }]
+}
+```
+
+## 7. Ejemplo concreto de ejercicio completo
+
+Este es un ejemplo listo para copiar y adaptar a cualquier ejercicio del catálogo. Sirve para un ejercicio de lectura o explicación, pero puedes cambiar la lógica y el contenido sin tocar la parte de IA.
+
+```html
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Comprensión lectora con ayuda de IA</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(180deg, #f6fbff 0%, #edf5ff 100%);
+      color: #1f2937;
+    }
+    .card {
+      max-width: 820px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 18px;
+      padding: 28px;
+      box-shadow: 0 10px 30px rgba(37, 99, 235, 0.08);
+    }
+    h1 {
+      margin-top: 0;
+      color: #1d4ed8;
+    }
+    .text {
+      background: #f3f8ff;
+      border-left: 5px solid #60a5fa;
+      padding: 16px;
+      border-radius: 10px;
+      line-height: 1.6;
+      margin: 18px 0;
+    }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      padding: 12px;
+      border: 2px solid #bfdbfe;
+      border-radius: 10px;
+      font-size: 16px;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    button {
+      margin-top: 12px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .feedback {
+      margin-top: 18px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      display: none;
+      line-height: 1.5;
+    }
+    .success {
+      background: #eafaf0;
+      color: #166534;
+    }
+    .error {
+      background: #fdecec;
+      color: #991b1b;
+    }
+    .helper {
+      margin-top: 16px;
+      background: #eff6ff;
+      border-radius: 10px;
+      padding: 12px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Lee y responde</h1>
+    <p>Lee el texto y responde con una frase breve.</p>
+
+    <div class="text">
+      El conejo se despertó temprano y vio que la hierba del jardín brillaba con gotas de rocío.
+      Quiso correr, pero primero decidió escuchar el canto de los pájaros y observar cómo la luz del sol
+      entraba por la ventana. Entonces comprendió que la mañana era un momento perfecto para empezar el día.
+    </div>
+
+    <label for="answer">¿Qué hizo el conejo antes de correr?</label>
+    <textarea id="answer" placeholder="Escribe tu respuesta..."></textarea>
+    <button id="checkBtn">Comprobar</button>
+    <button id="helpBtn" style="margin-left: 8px; background: #0ea5e9;">Pedir ayuda con IA</button>
+
+    <div id="feedback" class="feedback"></div>
+    <div id="helper" class="helper"></div>
+  </div>
+
+  <script>
+    const answerEl = document.getElementById('answer');
+    const feedbackEl = document.getElementById('feedback');
+    const helperEl = document.getElementById('helper');
+
+    function showFeedback(text, kind) {
+      feedbackEl.textContent = text;
+      feedbackEl.className = 'feedback ' + kind;
+      feedbackEl.style.display = 'block';
+    }
+
+    function sendToParent(type, payload = {}, requestId = String(Date.now())) {
+      window.parent.postMessage({ type, requestId, payload }, '*');
+    }
+
+    document.getElementById('checkBtn').addEventListener('click', () => {
+      const answer = answerEl.value.trim().toLowerCase();
+      if (!answer) {
+        showFeedback('Escribe una respuesta antes de comprobar.', 'error');
+        return;
+      }
+
+      const ok = answer.includes('escuchar') || answer.includes('oyó') || answer.includes('escuchó') || answer.includes('escuchó el canto') || answer.includes('observó') || answer.includes('miró');
+      if (ok) {
+        showFeedback('¡Correcto! Antes de correr, el conejo escuchó y observó la mañana.', 'success');
+      } else {
+        showFeedback('Casi lo tienes. Antes de correr, el conejo escuchó el canto de los pájaros y observó la luz del sol.', 'error');
+      }
+    });
+
+    document.getElementById('helpBtn').addEventListener('click', () => {
+      helperEl.style.display = 'block';
+      helperEl.textContent = 'Solicitando ayuda...';
+      sendToParent('ia:request', {
+        prompt: 'Explica esta pregunta con una pista muy sencilla para un niño de 8 años.',
+        provider: 'openai',
+        model: 'gpt-4o-mini'
+      });
+    });
+
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+
+      if (data.type === 'exerciseserver:ia:result') {
+        if (!data.ok) {
+          helperEl.textContent = data.error || 'No se pudo obtener ayuda.';
+          helperEl.style.display = 'block';
+          return;
+        }
+
+        const text = data.data && data.data.text ? data.data.text : 'Sin respuesta.';
+        helperEl.textContent = text;
+        helperEl.style.display = 'block';
+      }
+    });
+
+    sendToParent('ia:hello');
+  </script>
+</body>
+</html>
+```
+
+Este patrón sirve para cualquier ejercicio:
+- cambia el contenido visual
+- cambia la lógica del reto
+- mantén exactamente la parte de `postMessage` para pedir ayuda
+- no añadas `fetch` ni peticiones HTTP directas al ejercicio
+
+## 8. Prompt recomendado para que la IA genere un ejercicio
 
 Usa este prompt base:
 
@@ -284,7 +513,7 @@ y una escucha en window.addEventListener('message', ...) para manejar la respues
 Devuelve SOLO el código HTML final, sin explicaciones, sin markdown y sin bloques de código delimitados.
 ```
 
-## 7. Plantilla de relleno para cualquier ejercicio
+## 9. Plantilla de relleno para cualquier ejercicio
 
 ```text
 Tema: {TEMA}
@@ -299,7 +528,7 @@ Necesidad de ayuda de IA: {SI/NO}
 Genera el ejercicio en HTML puro y seguro, compatible con sandbox y con soporte de IA mediante postMessage.
 ```
 
-## 8. Resultado esperado
+## 10. Resultado esperado
 
 El ejercicio generado debe ser un único archivo HTML listo para subir al catálogo y que cumpla estas condiciones:
 
@@ -311,7 +540,7 @@ El ejercicio generado debe ser un único archivo HTML listo para subir al catál
 - funciona dentro del visor del proyecto
 - es útil para niños y tiene instrucción clara
 
-## 9. Recomendación práctica
+## 11. Recomendación práctica
 
 Para cualquier ejercicio que quiera usar IA:
 
@@ -322,7 +551,7 @@ Para cualquier ejercicio que quiera usar IA:
 5. Maneja la respuesta con `window.addEventListener('message')`.
 6. No fuerces peticiones directas desde el iframe.
 
-## 10. Resumen corto
+## 12. Resumen corto
 
 La regla definitiva es esta:
 

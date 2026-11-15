@@ -37,7 +37,9 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
             -ldflags "-s -w -X main.version=$TAG" \
             -o release/exerciseserver-linux-amd64 ./cmd/exerciseserver
-          cd release && sha256sum exerciseserver-linux-amd64 > exerciseserver-linux-amd64.sha256
+          cd release
+          sha256sum exerciseserver-linux-amd64 > exerciseserver-linux-amd64.sha256
+          sha256sum -c exerciseserver-linux-amd64.sha256
 
       - name: Publish release
         env:

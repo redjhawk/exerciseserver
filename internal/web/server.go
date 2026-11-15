@@ -61,10 +61,10 @@ func New(st *store.Store, dataDir, version string) (*Server, error) {
 	s := &Server{store: st, filesDir: filesDir, version: version, pages: map[string]*template.Template{},
 		limiter: &loginLimiter{fails: map[string][]time.Time{}}, apiLimiter: &rateLimiter{byUser: map[int64][]time.Time{}}, httpClient: &http.Client{Timeout: 30 * time.Second}}
 	funcs := template.FuncMap{
-		"join":        strings.Join,
-		"size":        humanSize,
-		"date":        func(t time.Time) string { return t.Format("02/01/2006") },
-		"lower":       strings.ToLower,
+		"join":         strings.Join,
+		"size":         humanSize,
+		"date":         func(t time.Time) string { return t.Format("02/01/2006") },
+		"lower":        strings.ToLower,
 		"defaultModel": defaultModel,
 		"tagsAttr": func(tags []string) string {
 			l := make([]string, len(tags))
@@ -1117,7 +1117,9 @@ func fetchProviderModels(provider, apiKey string, client *http.Client) ([]string
 			return nil, fmt.Errorf("OpenAI %s: %s", resp.Status, strings.TrimSpace(string(b)))
 		}
 		var out struct {
-			Data []struct { ID string `json:"id"` } `json:"data"`
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			return nil, err
@@ -1147,7 +1149,9 @@ func fetchProviderModels(provider, apiKey string, client *http.Client) ([]string
 			return nil, fmt.Errorf("Gemini %s: %s", resp.Status, strings.TrimSpace(string(b)))
 		}
 		var out struct {
-			Models []struct { Name string `json:"name"` } `json:"models"`
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			return nil, err
@@ -1182,7 +1186,9 @@ func fetchProviderModels(provider, apiKey string, client *http.Client) ([]string
 			return nil, fmt.Errorf("Claude %s: %s", resp.Status, strings.TrimSpace(string(b)))
 		}
 		var out struct {
-			Data []struct { ID string `json:"id"` } `json:"data"`
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			return nil, err
