@@ -97,6 +97,7 @@ form.inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; mar
 .msg { padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; }
 .msg.ok { background: var(--ok-bg); }
 .msg.err { background: var(--err-bg); }
+.msg.warn { background: #fff7d6; color: #6b4e00; border: 1px solid #f0d98d; }
 
 .login-box { max-width: 360px; margin: 10vh auto; text-align: center; background: var(--surface); padding: 28px; border-radius: 18px; border: 1px solid var(--border); }
 .login-box form { text-align: left; }

@@ -118,6 +118,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/usuarios/{id}/password", s.admin(s.adminUserPassword))
 	mux.HandleFunc("POST /admin/usuarios/{id}/ia", s.admin(s.adminUserAI))
 	mux.HandleFunc("POST /admin/usuarios/{id}/borrar", s.admin(s.adminUserDelete))
+	mux.HandleFunc("GET /mi-ia", s.auth(s.userAIPage))
+	mux.HandleFunc("POST /mi-ia", s.auth(s.userAIUpdate))
 
 	mux.HandleFunc("GET /api/ia/config", s.apiAuth(s.apiConfig))
 	mux.HandleFunc("POST /api/ia", s.apiAuth(s.apiIA))
@@ -605,6 +607,53 @@ func (s *Server) SaveFile(origName string, r io.Reader, levelID int64, tags []st
 	return id, nil
 }
 
+func (s *Server) replaceFile(id int64, fh *multipart.FileHeader) error {
+	origName := filepath.Base(strings.ReplaceAll(fh.Filename, "\\", "/"))
+	kind := kindOf(origName)
+	if kind == "" {
+		return fmt.Errorf("%s: solo se admiten ficheros .html, .htm y .pdf", origName)
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	stored := randomName("." + kind)
+	dst := filepath.Join(s.filesDir, stored)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
+	if err != nil {
+		return err
+	}
+	head := make([]byte, 64<<10)
+	nHead, _ := io.ReadFull(f, head)
+	head = head[:nHead]
+	n, err := io.Copy(out, io.MultiReader(bytes.NewReader(head), f))
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(dst)
+		return err
+	}
+	if kind == "pdf" && !bytes.HasPrefix(bytes.TrimLeft(head, "\x00\t\r\n "), []byte("%PDF-")) {
+		os.Remove(dst)
+		return fmt.Errorf("%s: no parece un PDF válido", origName)
+	}
+	prev, err := s.store.GetFile(id)
+	if err != nil {
+		os.Remove(dst)
+		return err
+	}
+	if err := s.store.UpdateFileContent(id, origName, kind, stored, n); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	if prev.StoredName != "" {
+		_ = os.Remove(filepath.Join(s.filesDir, filepath.Base(prev.StoredName)))
+	}
+	return nil
+}
+
 func (s *Server) levelFromForm(r *http.Request) (int64, error) {
 	if nl := strings.TrimSpace(r.FormValue("new_level")); nl != "" {
 		return s.store.LevelByName(nl)
@@ -686,6 +735,16 @@ func (s *Server) adminFileUpdate(w http.ResponseWriter, r *http.Request, _ store
 		return
 	}
 	back := fmt.Sprintf("/admin/ficheros/%d", id)
+	if replacement, fh, err := r.FormFile("replacement_file"); err == nil {
+		defer replacement.Close()
+		if err := s.replaceFile(id, fh); err != nil {
+			redirectMsg(w, r, back, err, "")
+			return
+		}
+	} else if !errors.Is(err, http.ErrMissingFile) {
+		redirectMsg(w, r, back, err, "")
+		return
+	}
 	title := strings.TrimSpace(r.FormValue("title"))
 	if title == "" {
 		redirectMsg(w, r, back, errors.New("el título no puede estar vacío"), "")
@@ -780,8 +839,40 @@ func (s *Server) adminUserAI(w http.ResponseWriter, r *http.Request, _ store.Ses
 		http.NotFound(w, r)
 		return
 	}
-	err := s.store.SetUserAI(id, r.FormValue("provider"), r.FormValue("api_key"))
+	provider := r.FormValue("provider")
+	apiKey := r.FormValue("api_key")
+	force := r.FormValue("force") == "1"
+	if force {
+		err := s.store.SetUserAIFixed(id, true, provider, apiKey)
+		redirectMsg(w, r, "/admin/usuarios", err, "IA forzada")
+		return
+	}
+	err := s.store.SetUserAI(id, provider, apiKey)
+	if err == nil {
+		err = s.store.SetUserAIFixed(id, false, "", "")
+	}
 	redirectMsg(w, r, "/admin/usuarios", err, "IA guardada")
+}
+
+func (s *Server) userAIPage(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	cfg, err := s.store.GetEffectiveUserAI(sess.User.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "error interno", 500)
+		return
+	}
+	s.render(w, r, "user_ai", pageData{Title: "IA", Session: sess, Active: "ia", Data: cfg})
+}
+
+func (s *Server) userAIUpdate(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	if err := s.store.SetUserAI(sess.User.ID, r.FormValue("provider"), r.FormValue("api_key")); err != nil {
+		redirectMsg(w, r, "/mi-ia", err, "")
+		return
+	}
+	if err := s.store.SetUserAIFixed(sess.User.ID, false, "", ""); err != nil {
+		redirectMsg(w, r, "/mi-ia", err, "")
+		return
+	}
+	redirectMsg(w, r, "/mi-ia", nil, "IA guardada")
 }
 
 func (s *Server) adminUserDelete(w http.ResponseWriter, r *http.Request, sess store.Session) {
@@ -908,7 +999,7 @@ func (s *Server) apiProviders(w http.ResponseWriter, r *http.Request, sess store
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	cfg, err := s.store.GetUserAI(sess.User.ID)
+	cfg, err := s.store.GetEffectiveUserAI(sess.User.ID)
 	providers := []iaProviderInfo{}
 	defaultProvider := ""
 	if err == nil && cfg.Provider != "none" && cfg.APIKey != "" {
@@ -936,7 +1027,7 @@ func (s *Server) apiProviders(w http.ResponseWriter, r *http.Request, sess store
 }
 
 func (s *Server) apiConfig(w http.ResponseWriter, r *http.Request, sess store.Session) {
-	cfg, err := s.store.GetUserAI(sess.User.ID)
+	cfg, err := s.store.GetEffectiveUserAI(sess.User.ID)
 	providers := []iaProviderInfo{}
 	defaultProvider := ""
 	if err == nil && cfg.Provider != "none" && cfg.APIKey != "" {
@@ -1023,7 +1114,7 @@ func (s *Server) apiIA(w http.ResponseWriter, r *http.Request, sess store.Sessio
 		writeAPIError(w, http.StatusBadRequest, "empty_prompt", "prompt vacío", "")
 		return
 	}
-	cfg, err := s.store.GetUserAI(sess.User.ID)
+	cfg, err := s.store.GetEffectiveUserAI(sess.User.ID)
 	if err != nil || cfg.Provider == "none" || cfg.APIKey == "" {
 		writeAPIError(w, http.StatusBadRequest, "no_config", "Sin configuración de IA para este usuario", "")
 		return

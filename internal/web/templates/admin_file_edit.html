@@ -5,7 +5,7 @@
 <h1>Editar ejercicio</h1>
 <section class="panel">
   <p class="muted">{{.File.OrigName}} · {{.File.Kind}} · {{size .File.Size}} · subido el {{date .File.UploadedAt}} · <a href="/ver/{{.File.ID}}">ver</a></p>
-  <form method="post" action="/admin/ficheros/{{.File.ID}}" class="stack">
+  <form method="post" action="/admin/ficheros/{{.File.ID}}" enctype="multipart/form-data" class="stack">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <label>Título <input name="title" value="{{.File.Title}}" required maxlength="200"></label>
     <label>Descripción <input name="description" value="{{.File.Description}}" maxlength="500"></label>
@@ -23,6 +23,10 @@
       <input name="tags" class="tags-input" value="{{join .File.Tags ", "}}">
     </label>
     {{if .Tags}}<div class="tag-suggestions">{{range .Tags}}<button type="button" class="chip small add-tag" data-tag="{{.Name}}">+ {{.Name}}</button>{{end}}</div>{{end}}
+    <label>Versión nueva del fichero (opcional)
+      <input type="file" name="replacement_file" accept=".html,.htm,.pdf,text/html,application/pdf">
+    </label>
+    <p class="hint">Si eliges un fichero aquí, reemplaza la versión actual del ejercicio sin borrar el registro ni volver a subirlo desde cero.</p>
     <button type="submit" class="primary">Guardar</button>
   </form>
 </section>

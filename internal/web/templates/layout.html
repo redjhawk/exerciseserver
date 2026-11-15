@@ -14,6 +14,7 @@
   <a class="brand" href="/"><img src="/static/icon.svg" alt="" width="28" height="28"> Ejercicios</a>
   <nav>
     <a href="/" {{if or (eq .Active "catalog") (eq .Active "viewer")}}class="on"{{end}}>Catálogo</a>
+    <a href="/mi-ia" {{if eq .Active "ia"}}class="on"{{end}}>IA</a>
     {{if .Session.User.IsAdmin}}
     <a href="/admin/ficheros" {{if eq .Active "files"}}class="on"{{end}}>Ficheros</a>
     <a href="/admin/usuarios" {{if eq .Active "users"}}class="on"{{end}}>Usuarios</a>

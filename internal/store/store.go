@@ -31,11 +31,13 @@ type User struct {
 	CreatedAt  time.Time
 	AIProvider string
 	AIKey      string
+	AIForce    bool
 }
 
 type UserAIConfig struct {
 	Provider string
 	APIKey   string
+	Forced   bool
 }
 
 type Session struct {
@@ -80,7 +82,10 @@ CREATE TABLE IF NOT EXISTS users (
 	active INTEGER NOT NULL DEFAULT 1,
 	created_at INTEGER NOT NULL,
 	ai_provider TEXT NOT NULL DEFAULT 'none',
-	ai_api_key TEXT NOT NULL DEFAULT ''
+	ai_api_key TEXT NOT NULL DEFAULT '',
+	ai_force INTEGER NOT NULL DEFAULT 0,
+	ai_forced_provider TEXT NOT NULL DEFAULT 'none',
+	ai_forced_api_key TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
@@ -139,18 +144,24 @@ func ensureUserAIColumns(db *sql.DB) error {
 		return err
 	}
 	defer rows.Close()
-	var hasProvider, hasKey bool
+	var hasProvider, hasKey, hasForce, hasForcedProvider, hasForcedKey bool
 	for rows.Next() {
 		var cid, notNull, pk int
 		var name, colType, dfltValue sql.NullString
 		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
 			return err
 		}
-		if name.String == "ai_provider" {
+		switch name.String {
+		case "ai_provider":
 			hasProvider = true
-		}
-		if name.String == "ai_api_key" {
+		case "ai_api_key":
 			hasKey = true
+		case "ai_force":
+			hasForce = true
+		case "ai_forced_provider":
+			hasForcedProvider = true
+		case "ai_forced_api_key":
+			hasForcedKey = true
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -163,6 +174,21 @@ func ensureUserAIColumns(db *sql.DB) error {
 	}
 	if !hasKey {
 		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_api_key TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !hasForce {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_force INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	if !hasForcedProvider {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_forced_provider TEXT NOT NULL DEFAULT 'none'`); err != nil {
+			return err
+		}
+	}
+	if !hasForcedKey {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN ai_forced_api_key TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}
@@ -255,7 +281,7 @@ func (s *Store) Authenticate(username, password string) (User, bool) {
 }
 
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id,username,is_admin,active,created_at,ai_provider FROM users ORDER BY username`)
+	rows, err := s.db.Query(`SELECT id,username,is_admin,active,created_at,ai_force,ai_provider,ai_forced_provider FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -264,11 +290,18 @@ func (s *Store) ListUsers() ([]User, error) {
 	for rows.Next() {
 		var u User
 		var c int64
-		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &u.AIProvider); err != nil {
+		var forced int
+		var personalProvider, forcedProvider sql.NullString
+		if err := rows.Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &forced, &personalProvider, &forcedProvider); err != nil {
 			return nil, err
 		}
 		u.CreatedAt = time.Unix(c, 0)
-		u.AIProvider = NormalizeAIProvider(u.AIProvider)
+		u.AIForce = forced == 1
+		if u.AIForce {
+			u.AIProvider = NormalizeAIProvider(forcedProvider.String)
+		} else {
+			u.AIProvider = NormalizeAIProvider(personalProvider.String)
+		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -314,13 +347,20 @@ func (s *Store) CountActiveAdmins() (int, error) {
 func (s *Store) GetUser(id int64) (User, error) {
 	var u User
 	var c int64
-	err := s.db.QueryRow(`SELECT id,username,is_admin,active,created_at,ai_provider FROM users WHERE id=?`, id).
-		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &u.AIProvider)
+	var forced int
+	var personalProvider, forcedProvider sql.NullString
+	err := s.db.QueryRow(`SELECT id,username,is_admin,active,created_at,ai_force,ai_provider,ai_forced_provider FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &u.IsAdmin, &u.Active, &c, &forced, &personalProvider, &forcedProvider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrNotFound
 	}
 	u.CreatedAt = time.Unix(c, 0)
-	u.AIProvider = NormalizeAIProvider(u.AIProvider)
+	u.AIForce = forced == 1
+	if u.AIForce {
+		u.AIProvider = NormalizeAIProvider(forcedProvider.String)
+	} else {
+		u.AIProvider = NormalizeAIProvider(personalProvider.String)
+	}
 	return u, err
 }
 
@@ -337,6 +377,32 @@ func (s *Store) SetUserAI(id int64, provider, apiKey string) error {
 	return err
 }
 
+func (s *Store) SetUserAIFixed(id int64, fixed bool, provider, apiKey string) error {
+	provider = NormalizeAIProvider(provider)
+	apiKey = strings.TrimSpace(apiKey)
+	if fixed {
+		if provider != "none" && apiKey == "" {
+			return errors.New("falta la clave de la IA")
+		}
+		if provider == "none" {
+			apiKey = ""
+		}
+		_, err := s.db.Exec(`UPDATE users SET ai_force=1, ai_forced_provider=?, ai_forced_api_key=? WHERE id=?`, provider, apiKey, id)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE users SET ai_force=0, ai_forced_provider='none', ai_forced_api_key='' WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) IsUserAIFixed(id int64) (bool, error) {
+	var force int
+	err := s.db.QueryRow(`SELECT ai_force FROM users WHERE id=?`, id).Scan(&force)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return force == 1, err
+}
+
 func (s *Store) GetUserAI(id int64) (UserAIConfig, error) {
 	var cfg UserAIConfig
 	err := s.db.QueryRow(`SELECT ai_provider, ai_api_key FROM users WHERE id=?`, id).Scan(&cfg.Provider, &cfg.APIKey)
@@ -346,6 +412,27 @@ func (s *Store) GetUserAI(id int64) (UserAIConfig, error) {
 	cfg.Provider = NormalizeAIProvider(cfg.Provider)
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	return cfg, err
+}
+
+func (s *Store) GetEffectiveUserAI(id int64) (UserAIConfig, error) {
+	var cfg UserAIConfig
+	var forced int
+	var forcedProvider, forcedAPIKey, personalProvider, personalAPIKey string
+	err := s.db.QueryRow(`SELECT ai_force, ai_forced_provider, ai_forced_api_key, ai_provider, ai_api_key FROM users WHERE id=?`, id).
+		Scan(&forced, &forcedProvider, &forcedAPIKey, &personalProvider, &personalAPIKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return cfg, ErrNotFound
+	}
+	if forced == 1 {
+		cfg.Provider = NormalizeAIProvider(forcedProvider)
+		cfg.APIKey = strings.TrimSpace(forcedAPIKey)
+		cfg.Forced = true
+		return cfg, nil
+	}
+	cfg.Provider = NormalizeAIProvider(personalProvider)
+	cfg.APIKey = strings.TrimSpace(personalAPIKey)
+	cfg.Forced = false
+	return cfg, nil
 }
 
 // ---------- sessions ----------
@@ -586,6 +673,19 @@ func (s *Store) UpdateFile(id int64, title, description string, levelID int64, t
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM file_tags)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UpdateFileContent(id int64, origName, kind, storedName string, size int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE files SET kind=?, orig_name=?, stored_name=?, size=?, uploaded_at=? WHERE id=?`,
+		kind, origName, storedName, size, time.Now().Unix(), id); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -1,0 +1,26 @@
+{{define "content"}}
+{{$csrf := .Session.CSRFToken}}
+<h1>IA</h1>
+<section class="panel">
+  {{if .Data.Forced}}
+  <p class="msg warn">Tu proveedor y clave los está fijando un administrador. Puedes cambiar la cuenta, pero la IA usada por esta sesión queda forzada.</p>
+  {{else}}
+  <p class="hint">Cada usuario puede guardar su propia clave de IA. Si un administrador fuerza una configuración, esa tendrá prioridad.</p>
+  {{end}}
+  <form method="post" action="/mi-ia" class="row">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label>Proveedor
+      <select name="provider" {{if .Data.Forced}}disabled{{end}}>
+        <option value="none" {{if eq .Data.Provider "none"}}selected{{end}}>Sin IA</option>
+        <option value="openai" {{if eq .Data.Provider "openai"}}selected{{end}}>OpenAI</option>
+        <option value="gemini" {{if eq .Data.Provider "gemini"}}selected{{end}}>Gemini</option>
+        <option value="claude" {{if eq .Data.Provider "claude"}}selected{{end}}>Claude</option>
+      </select>
+    </label>
+    <label>Clave API
+      <input type="password" name="api_key" placeholder="clave API" autocomplete="off" size="24" {{if .Data.Forced}}disabled{{end}}>
+    </label>
+    {{if not .Data.Forced}}<button type="submit" class="primary">Guardar</button>{{end}}
+  </form>
+</section>
+{{end}}

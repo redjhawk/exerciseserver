@@ -31,6 +31,7 @@
       <td>
         <form method="post" action="/admin/usuarios/{{.ID}}/ia" class="inline">
           <input type="hidden" name="csrf" value="{{$csrf}}">
+          <label class="check"><input type="checkbox" name="force" value="1" {{if .AIForce}}checked{{end}}> Forzar</label>
           <label>
             <select name="provider">
               <option value="none" {{if eq .AIProvider "none"}}selected{{end}}>Sin IA</option>

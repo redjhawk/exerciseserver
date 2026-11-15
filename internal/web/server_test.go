@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -145,6 +146,88 @@ func TestFlow(t *testing.T) {
 	}
 }
 
+func TestReplaceUploadedFileKeepsSameRecord(t *testing.T) {
+	ts, st := newTestServer(t)
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	admin := client(t)
+	login(t, admin, ts.URL, "admin", "secret-admin")
+	csrf := csrfToken(t, admin, ts.URL)
+
+	var upload bytes.Buffer
+	mw := multipart.NewWriter(&upload)
+	mw.WriteField("csrf", csrf)
+	mw.WriteField("tags", "matemáticas")
+	fw, err := mw.CreateFormFile("files", "sumas.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw.Write([]byte("<html><head><title>Sumas</title></head><body>viejo</body></html>"))
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := admin.Post(ts.URL+"/admin/ficheros", mw.FormDataContentType(), &upload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("upload status: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	files, err := st.ListFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+	id := files[0].ID
+
+	var replace bytes.Buffer
+	mw = multipart.NewWriter(&replace)
+	mw.WriteField("csrf", csrf)
+	mw.WriteField("title", "Sumas actualizadas")
+	mw.WriteField("description", "Versión nueva")
+	mw.WriteField("tags", "matemáticas, suma")
+	fw, err = mw.CreateFormFile("replacement_file", "sumas-v2.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw.Write([]byte("<html><head><title>Sumas actualizadas</title></head><body>nuevo contenido</body></html>"))
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = admin.Post(ts.URL+"/admin/ficheros/"+url.QueryEscape(strconv.FormatInt(id, 10)), mw.FormDataContentType(), &replace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("replace status: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	f, err := st.GetFile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Title != "Sumas actualizadas" {
+		t.Fatalf("title not updated: %+v", f)
+	}
+	resp, err = admin.Get(ts.URL + "/f/" + strconv.FormatInt(id, 10) + "/contenido")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "nuevo contenido") {
+		t.Fatalf("replacement content not served: %s", string(body))
+	}
+	if !strings.Contains(string(body), "Sumas actualizadas") {
+		t.Fatalf("updated title not rendered: %s", string(body))
+	}
+}
+
 func TestUserAIProviderAndProxy(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
@@ -215,6 +298,67 @@ func TestUserAIProviderAndProxy(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "respuesta OK") {
 		t.Fatalf("proxy response: %s", string(body))
+	}
+}
+
+func TestUserCanSetOwnAIAndAdminCanForceIt(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword("secret-admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("nino", "1234", false); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(st, dir, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	kid := client(t)
+	login(t, kid, ts.URL, "nino", "1234")
+	csrf := csrfToken(t, kid, ts.URL)
+	resp, err := kid.PostForm(ts.URL+"/mi-ia", url.Values{"csrf": {csrf}, "provider": {"gemini"}, "api_key": {"user-key"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("user save AI: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	cfg, err := st.GetUserAI(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider != "gemini" || cfg.APIKey != "user-key" {
+		t.Fatalf("user cfg stored: %+v", cfg)
+	}
+
+	admin := client(t)
+	login(t, admin, ts.URL, "admin", "secret-admin")
+	csrfAdmin := csrfToken(t, admin, ts.URL)
+	resp, err = admin.PostForm(ts.URL+"/admin/usuarios/2/ia", url.Values{"csrf": {csrfAdmin}, "provider": {"openai"}, "api_key": {"forced-key"}, "force": {"1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("admin force AI: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	cfg, err = st.GetEffectiveUserAI(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider != "openai" || cfg.APIKey != "forced-key" {
+		t.Fatalf("effective cfg after force: %+v", cfg)
+	}
+	forced, err := st.IsUserAIFixed(2)
+	if err != nil || !forced {
+		t.Fatalf("force flag: %v %v", forced, err)
 	}
 }
 
