@@ -1367,7 +1367,13 @@ func (s *Server) apiModels(w http.ResponseWriter, r *http.Request, sess store.Se
 	}
 	provider := r.FormValue("provider")
 	apiKey := r.FormValue("api_key")
-	if cfg, err := s.store.GetEffectiveUserAI(sess.User.ID); err == nil && cfg.Provider == provider && cfg.APIKey != "" {
+	target := sess.User.ID
+	if sess.User.IsAdmin {
+		if id, err := strconv.ParseInt(r.FormValue("user_id"), 10, 64); err == nil && id > 0 {
+			target = id
+		}
+	}
+	if cfg, err := s.store.GetEffectiveUserAI(target); err == nil && cfg.Provider == provider && cfg.APIKey != "" {
 		apiKey = resolveStoredAPIKey(cfg.APIKey, apiKey)
 	}
 	provider = store.NormalizeAIProvider(provider)

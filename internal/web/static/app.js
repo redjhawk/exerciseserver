@@ -77,17 +77,19 @@
   }
 
   // ---------- IA model loader ----------
-  const aiProvider = $("#ai-provider");
-  const aiApiKey = $("#ai-api-key");
-  const aiModel = $("#ai-model");
-  const aiLoadButton = $("#load-ai-models");
-  const aiCsrfInput = document.querySelector('input[name="csrf"]');
-  if (aiProvider && aiApiKey && aiModel && aiCsrfInput) {
+  // Same flow on /mi-ia and /admin/usuarios: provider + key, "Cargar modelos", pick, save.
+  document.querySelectorAll("[data-ai-form]").forEach((form) => {
+    const aiProvider = form.querySelector('select[name="provider"]');
+    const aiApiKey = form.querySelector('input[name="api_key"]');
+    const aiModel = form.querySelector('select[name="model"]');
+    const aiLoadButton = form.querySelector("[data-load-models]");
+    const aiCsrfInput = form.querySelector('input[name="csrf"]');
+    if (!aiProvider || !aiApiKey || !aiModel || !aiCsrfInput) return;
     const setOptions = (models, selected) => {
       const list = Array.isArray(models) ? [...models] : [];
       if (selected && !list.includes(selected)) list.unshift(selected);
       aiModel.innerHTML = "";
-      if (!list || list.length === 0) {
+      if (list.length === 0) {
         const empty = document.createElement("option");
         empty.value = "";
         empty.textContent = "Sin modelo";
@@ -102,6 +104,7 @@
         aiModel.appendChild(option);
       });
     };
+    const canLoad = () => !aiApiKey.disabled && aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim();
 
     const loadModels = () => {
       const selectedProvider = aiProvider.value;
@@ -110,13 +113,13 @@
         setOptions([], "");
         return;
       }
-      const csrf = aiCsrfInput.value;
-      const body = new URLSearchParams({ csrf, provider: selectedProvider, api_key: key });
+      const params = { csrf: aiCsrfInput.value, provider: selectedProvider, api_key: key };
+      if (form.dataset.userId) params.user_id = form.dataset.userId;
       fetch("/api/ia/models", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
-        body: body.toString(),
+        body: new URLSearchParams(params).toString(),
       })
         .then((r) => r.json().then((json) => ({ status: r.status, body: json })))
         .then(({ status, body }) => {
@@ -134,12 +137,10 @@
     };
 
     aiProvider.addEventListener("change", loadModels);
-    aiApiKey.addEventListener("input", () => {
-      if (!aiApiKey.disabled && aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
-    });
+    aiApiKey.addEventListener("input", () => { if (canLoad()) loadModels(); });
     if (aiLoadButton) aiLoadButton.addEventListener("click", loadModels);
-    if (!aiApiKey.disabled && aiProvider.value && aiProvider.value !== "none" && aiApiKey.value.trim()) loadModels();
-  }
+    if ("aiAutoload" in form.dataset && canLoad()) loadModels();
+  });
 
   // ---------- token visibility ----------
   document.querySelectorAll("[data-toggle-token]").forEach((button) => {

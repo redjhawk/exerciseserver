@@ -7,7 +7,7 @@
   {{else}}
   <p class="hint">Cada usuario puede guardar su propia clave de IA. Si un administrador fuerza una configuración, esa tendrá prioridad.</p>
   {{end}}
-  <form method="post" action="/mi-ia" class="row">
+  <form method="post" action="/mi-ia" class="row" data-ai-form data-ai-autoload>
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <label>Proveedor
       <select id="ai-provider" name="provider" {{if .Data.Forced}}disabled{{end}}>
@@ -32,7 +32,7 @@
         {{end}}
       </select>
     </label>
-    {{if not .Data.Forced}}<button id="load-ai-models" type="button" class="secondary">Cargar modelos</button>{{end}}
+    {{if not .Data.Forced}}<button id="load-ai-models" type="button" class="secondary" data-load-models>Cargar modelos</button>{{end}}
     <button type="submit" class="primary">Guardar</button>
   </form>
 
