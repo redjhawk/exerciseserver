@@ -10,6 +10,23 @@
     })
   );
 
+  // Copy buttons: <button data-copy="input-id">.
+  $$("button[data-copy]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const input = document.getElementById(b.dataset.copy);
+      if (!input) return;
+      input.select();
+      try {
+        await navigator.clipboard.writeText(input.value);
+      } catch (_) {
+        document.execCommand("copy");
+      }
+      const old = b.textContent;
+      b.textContent = "Copiado";
+      setTimeout(() => (b.textContent = old), 1500);
+    })
+  );
+
   // ---------- catalogue filters ----------
   const cards = $("#cards");
   if (cards && $("#filters")) {

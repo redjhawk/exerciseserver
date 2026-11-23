@@ -122,6 +122,15 @@ CREATE TABLE IF NOT EXISTS file_tags (
 	tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
 	PRIMARY KEY (file_id, tag_id)
 );
+CREATE TABLE IF NOT EXISTS api_tokens (
+	id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL,
+	token_hash TEXT NOT NULL UNIQUE,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL DEFAULT 0,
+	last_used_at INTEGER NOT NULL DEFAULT 0,
+	revoked_at INTEGER NOT NULL DEFAULT 0
+);
 `
 
 func Open(path string) (*Store, error) {
@@ -824,4 +833,135 @@ func (s *Store) ListFiles() ([]File, error) {
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// ---------- API tokens ----------
+
+// APIToken is a revocable credential for the MCP endpoint. Only its hash is stored.
+type APIToken struct {
+	ID         int64
+	Name       string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time // zero = never
+	LastUsedAt time.Time // zero = never used
+	RevokedAt  time.Time // zero = not revoked
+}
+
+// Status returns "activo", "caducado" or "revocado".
+func (t APIToken) Status(now time.Time) string {
+	switch {
+	case !t.RevokedAt.IsZero():
+		return "revocado"
+	case !t.ExpiresAt.IsZero() && !now.Before(t.ExpiresAt):
+		return "caducado"
+	}
+	return "activo"
+}
+
+const apiTokenPrefix = "exs_"
+
+func unixOrZero(v int64) time.Time {
+	if v == 0 {
+		return time.Time{}
+	}
+	return time.Unix(v, 0)
+}
+
+// CreateAPIToken returns the raw token; it cannot be recovered later. ttl <= 0 means no expiry.
+func (s *Store) CreateAPIToken(name string, ttl time.Duration) (string, APIToken, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", APIToken{}, errors.New("el nombre del token está vacío")
+	}
+	now := time.Now()
+	var exp int64
+	if ttl > 0 {
+		exp = now.Add(ttl).Unix()
+	}
+	raw := apiTokenPrefix + randomToken()
+	res, err := s.db.Exec(`INSERT INTO api_tokens(name,token_hash,created_at,expires_at) VALUES(?,?,?,?)`,
+		name, tokenHash(raw), now.Unix(), exp)
+	if err != nil {
+		return "", APIToken{}, err
+	}
+	id, _ := res.LastInsertId()
+	return raw, APIToken{ID: id, Name: name, CreatedAt: time.Unix(now.Unix(), 0), ExpiresAt: unixOrZero(exp)}, nil
+}
+
+// ValidateAPIToken checks that the token exists, is not revoked or expired, and records its use.
+func (s *Store) ValidateAPIToken(raw string) (APIToken, bool) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, apiTokenPrefix) {
+		return APIToken{}, false
+	}
+	now := time.Now().Unix()
+	var t APIToken
+	var created, exp int64
+	err := s.db.QueryRow(`SELECT id,name,created_at,expires_at FROM api_tokens
+		WHERE token_hash=? AND revoked_at=0 AND (expires_at=0 OR expires_at>?)`, tokenHash(raw), now).
+		Scan(&t.ID, &t.Name, &created, &exp)
+	if err != nil {
+		return APIToken{}, false
+	}
+	t.CreatedAt, t.ExpiresAt, t.LastUsedAt = time.Unix(created, 0), unixOrZero(exp), time.Unix(now, 0)
+	s.db.Exec(`UPDATE api_tokens SET last_used_at=? WHERE id=?`, now, t.ID)
+	return t, true
+}
+
+func (s *Store) ListAPITokens() ([]APIToken, error) {
+	rows, err := s.db.Query(`SELECT id,name,created_at,expires_at,last_used_at,revoked_at FROM api_tokens ORDER BY created_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []APIToken
+	for rows.Next() {
+		var t APIToken
+		var c, e, u, r int64
+		if err := rows.Scan(&t.ID, &t.Name, &c, &e, &u, &r); err != nil {
+			return nil, err
+		}
+		t.CreatedAt, t.ExpiresAt, t.LastUsedAt, t.RevokedAt = time.Unix(c, 0), unixOrZero(e), unixOrZero(u), unixOrZero(r)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RevokeAPIToken(id int64) error {
+	res, err := s.db.Exec(`UPDATE api_tokens SET revoked_at=? WHERE id=? AND revoked_at=0`, time.Now().Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("ese token no existe o ya estaba revocado")
+	}
+	return nil
+}
+
+func (s *Store) DeleteAPIToken(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM api_tokens WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// LevelIDByName finds an existing level (case-insensitive) without creating it.
+func (s *Store) LevelIDByName(name string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM levels WHERE name=?`, strings.TrimSpace(name)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return id, err
+}
+
+// FindFile returns the id of a file with the same original name and size, if any.
+func (s *Store) FindFile(origName string, size int64) (int64, bool) {
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM files WHERE orig_name=? AND size=? ORDER BY id LIMIT 1`, origName, size).Scan(&id)
+	return id, err == nil
 }
