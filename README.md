@@ -54,6 +54,7 @@ En [`INSTRUCCIONES_CLAUDE.md`](INSTRUCCIONES_CLAUDE.md) están las instrucciones
 - **Herramienta MCP `obtener_instrucciones`**: la IA conectada lo lee directamente del servidor. Al conectarse, el MCP ya le indica que lo haga antes de crear o modificar un ejercicio.
 - **Admin → Tokens → Instrucciones para la IA**: botones «Ver» y «Descargar», y una frase lista para copiar y pegarle a la IA.
 - **`/instrucciones-ia.md`**: para cualquier usuario con sesión iniciada (`?descargar=1` lo descarga).
+- **`/mcp/<token>/instrucciones.md`**: para una IA sin el conector MCP. Se le pasa esta URL, que se muestra al crear el token junto con una frase lista para copiar, y la IA descarga las instrucciones por sí misma. Deja de funcionar al revocar, borrar o caducar el token. Con la cabecera `Authorization: Bearer` también vale `/mcp/instrucciones.md`.
 
 Para usarlo hace falta un **token de API**, que se gestiona en **Admin → Tokens**:
 

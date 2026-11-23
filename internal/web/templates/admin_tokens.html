@@ -14,6 +14,12 @@
   <label>URL para claude.ai (conector personalizado, sin autenticación)
     <span class="copy-row"><input readonly value="{{$d.BaseURL}}/mcp/{{$d.NewToken}}" id="tok-url"><button type="button" class="small" data-copy="tok-url">Copiar</button></span>
   </label>
+  <label>URL de las instrucciones (la IA puede descargarlas con este token)
+    <span class="copy-row"><input readonly value="{{$d.BaseURL}}/mcp/{{$d.NewToken}}/instrucciones.md" id="tok-doc"><button type="button" class="small" data-copy="tok-doc">Copiar</button></span>
+  </label>
+  <label>Frase para la IA sin conector (le das la URL y te devuelve el HTML)
+    <span class="copy-row"><input readonly id="tok-doc-prompt" value="Descarga las instrucciones de {{$d.BaseURL}}/mcp/{{$d.NewToken}}/instrucciones.md y síguelas al pie de la letra para crear el ejercicio. Como no tienes el conector, entrégame el HTML completo en un único fichero para que yo lo suba."><button type="button" class="small" data-copy="tok-doc-prompt">Copiar</button></span>
+  </label>
   <label>Comando para Claude Code
     <span class="copy-row"><input readonly value="claude mcp add --transport http ejercicios {{$d.BaseURL}}/mcp --header &quot;Authorization: Bearer {{$d.NewToken}}&quot;" id="tok-cc"><button type="button" class="small" data-copy="tok-cc">Copiar</button></span>
   </label>
@@ -30,7 +36,7 @@
   <label>Si la IA está conectada al MCP, basta con decirle:
     <span class="copy-row"><input readonly id="tok-prompt" value="Antes de crear el ejercicio, llama a la herramienta obtener_instrucciones del conector «ejercicios» y síguelas al pie de la letra. Cuando termines, súbelo con subir_ejercicio y dame el enlace."><button type="button" class="small" data-copy="tok-prompt">Copiar</button></span>
   </label>
-  <p class="hint">Si no está conectada, descarga el fichero y adjúntalo (o pégalo en las instrucciones de tu proyecto de Claude).</p>
+  <p class="hint">Si no está conectada: crea un token (abajo) y te daremos una URL de las instrucciones protegida con ese token, que la IA puede descargar por sí misma; deja de funcionar al revocar, borrar o caducar el token. También puedes descargar el fichero y adjuntarlo.</p>
 </section>
 
 <section class="panel">

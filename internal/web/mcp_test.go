@@ -35,6 +35,9 @@ func createTokenViaAdmin(t *testing.T, c *http.Client, base, csrf, name, duratio
 	if !strings.Contains(string(body), base+"/mcp/"+tok) {
 		t.Fatal("falta la URL para claude.ai")
 	}
+	if !strings.Contains(string(body), base+"/mcp/"+tok+"/instrucciones.md") {
+		t.Fatal("falta la URL de las instrucciones")
+	}
 	return tok
 }
 
@@ -363,6 +366,29 @@ func TestInstructionsAvailable(t *testing.T) {
 	init := mcpCall(t, ts.URL+"/mcp", raw, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": map[string]any{}})
 	if !strings.Contains(init.Body["result"].(map[string]any)["instructions"].(string), "obtener_instrucciones") {
 		t.Fatal("initialize no menciona obtener_instrucciones")
+	}
+
+	// Via token URL (AI without the MCP connector), and with a Bearer header.
+	resp0, _ := http.Get(ts.URL + "/mcp/" + raw + "/instrucciones.md")
+	doc, _ := io.ReadAll(resp0.Body)
+	if resp0.StatusCode != 200 || string(doc) != txt || !strings.HasPrefix(resp0.Header.Get("Content-Type"), "text/markdown") {
+		t.Fatalf("instrucciones con token: %d", resp0.StatusCode)
+	}
+	req, _ := http.NewRequest("GET", ts.URL+"/mcp/instrucciones.md", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	if r, _ := http.DefaultClient.Do(req); r.StatusCode != 200 {
+		t.Fatalf("instrucciones con Bearer: %d", r.StatusCode)
+	}
+	if r, _ := http.Get(ts.URL + "/mcp/exs_falso/instrucciones.md"); r.StatusCode != 401 {
+		t.Fatalf("token falso: %d", r.StatusCode)
+	}
+	if r, _ := http.Get(ts.URL + "/mcp/instrucciones.md"); r.StatusCode != 401 {
+		t.Fatalf("sin token: %d", r.StatusCode)
+	}
+	list, _ := st.ListAPITokens()
+	st.RevokeAPIToken(list[0].ID)
+	if r, _ := http.Get(ts.URL + "/mcp/" + raw + "/instrucciones.md"); r.StatusCode != 401 {
+		t.Fatalf("token revocado: %d", r.StatusCode)
 	}
 
 	// Via web: requires login, then view and download.

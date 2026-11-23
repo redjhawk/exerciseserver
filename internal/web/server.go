@@ -142,6 +142,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/tokens/{id}/borrar", s.admin(s.adminTokenDelete))
 
 	mux.HandleFunc("GET /instrucciones-ia.md", s.auth(s.instructionsFile))
+	mux.HandleFunc("GET /mcp/{token}/instrucciones.md", s.instructionsWithToken)
+	mux.HandleFunc("GET /mcp/instrucciones.md", s.instructionsWithToken)
 	mux.HandleFunc("/mcp", s.mcpHandler)
 	mux.HandleFunc("/mcp/{token}", s.mcpHandler)
 
