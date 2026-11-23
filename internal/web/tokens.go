@@ -134,3 +134,18 @@ func (s *Server) instructionsFile(w http.ResponseWriter, r *http.Request, _ stor
 	}
 	io.WriteString(w, exerciseserver.InstruccionesClaude)
 }
+
+// instructionsWithToken serves the same document to an AI that only has an API token
+// (in the path, /mcp/<token>/instrucciones.md, or as a Bearer header on /mcp/instrucciones.md).
+func (s *Server) instructionsWithToken(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.store.ValidateAPIToken(apiTokenFromRequest(r)); !ok {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="exerciseserver"`)
+		http.Error(w, "token no válido, caducado o revocado", http.StatusUnauthorized)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/markdown; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Robots-Tag", "noindex")
+	io.WriteString(w, exerciseserver.InstruccionesClaude)
+}
