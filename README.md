@@ -35,6 +35,49 @@ sudo -u exerciseserver EXERCISESERVER_DATA_DIR=/var/lib/exerciseserver \
   /opt/exerciseserver/bin/exerciseserver import -level "1º Primaria" /tmp/ejercicios
 ```
 
+## Subir ejercicios desde Claude (servidor MCP)
+
+El servidor incluye un servidor MCP en `/mcp` para que Claude consulte, publique y modifique ejercicios directamente. Ofrece estas herramientas:
+
+| Herramienta | Qué hace |
+|---|---|
+| `listar_niveles`, `listar_etiquetas` | Devuelven los niveles y las etiquetas que existen, con su número de ejercicios. |
+| `listar_ejercicios(texto?, nivel?, etiqueta?, tipo?)` | Lista el catálogo con id, título, descripción, tipo, fichero, tamaño, nivel, etiquetas, fecha y enlace. Los filtros no distinguen mayúsculas ni tildes. |
+| `leer_ejercicio(id)` | Devuelve toda la información de un ejercicio y, si es HTML, su código completo. |
+| `subir_ejercicio(nombre_fichero, html, titulo?, descripcion?, nivel?, etiquetas?)` | Publica un HTML nuevo y devuelve el enlace `/ver/{id}`. Si ya existe un fichero con el mismo nombre y tamaño, no lo duplica. |
+| `actualizar_ejercicio(id, html?, nombre_fichero?, titulo?, descripcion?, nivel?, etiquetas?)` | Modifica un ejercicio conservando su id y su enlace. Solo cambia los campos que se envían: `html` sustituye el contenido (solo en ejercicios HTML), `nivel: ""` lo deja sin nivel y `etiquetas: []` quita todas. Si algún dato no es válido, no se cambia nada. |
+
+El nivel tiene que existir; las etiquetas se crean si hace falta. Para modificar un ejercicio, lo normal es pedírselo a Claude («cambia el ejercicio de sumas para que tenga 10 preguntas»). Claude lo busca con `listar_ejercicios`, lo lee con `leer_ejercicio` y lo guarda con `actualizar_ejercicio`. Actualizar sustituye el HTML anterior y no guarda una copia; si quieres conservarlo, descárgalo antes.
+
+En [`INSTRUCCIONES_CLAUDE.md`](INSTRUCCIONES_CLAUDE.md) están las instrucciones para la IA: cómo tiene que ser el HTML, cómo usar la IA de la plataforma (y cómo funcionar sin ella) y cómo subir o actualizar ejercicios. El fichero va incluido en el binario, así que siempre corresponde a la versión instalada, y se puede obtener de tres formas:
+
+- **Herramienta MCP `obtener_instrucciones`**: la IA conectada lo lee directamente del servidor. Al conectarse, el MCP ya le indica que lo haga antes de crear o modificar un ejercicio.
+- **Admin → Tokens → Instrucciones para la IA**: botones «Ver» y «Descargar», y una frase lista para copiar y pegarle a la IA.
+- **`/instrucciones-ia.md`**: para cualquier usuario con sesión iniciada (`?descargar=1` lo descarga).
+
+Para usarlo hace falta un **token de API**, que se gestiona en **Admin → Tokens**:
+
+1. Crea el token con un nombre y una duración: 1 hora, 1 día, 7 días, 30 días o sin caducidad. Se muestra **una sola vez**, junto con la URL y el comando listos para copiar.
+2. **Revocar** lo desactiva al momento y lo deja en la lista como registro. **Borrar** lo elimina del todo.
+3. La lista muestra el estado (activo, caducado o revocado), la fecha de caducidad y el último uso.
+
+En la base de datos solo se guarda el hash del token. El token solo sirve para el MCP (consultar, subir y modificar ejercicios; no puede borrarlos) y no da acceso a la interfaz web ni a la administración.
+
+**Claude Code** (con el token en la cabecera):
+
+```bash
+claude mcp add --transport http ejercicios https://ejercicios.tudominio.com/mcp \
+  --header "Authorization: Bearer exs_..."
+```
+
+**claude.ai** (Ajustes → Conectores → Añadir conector personalizado): claude.ai no permite cabeceras propias, así que el token va en la URL y el conector se añade sin autenticación:
+
+```
+https://ejercicios.tudominio.com/mcp/exs_...
+```
+
+Quien tenga esa URL puede subir ejercicios. Para este uso conviene crear tokens de corta duración y revocarlos al terminar.
+
 ## Release y despliegue
 
 Cada push a `master` o `main` ejecuta [`.github/workflows/release.yml`](.github/workflows/release.yml), que hace lo siguiente:

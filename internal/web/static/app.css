@@ -147,6 +147,10 @@ table.list { width: 100%; border-collapse: collapse; }
 table.list th, table.list td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 table.list th { font-size: .85rem; color: var(--muted); font-weight: 600; }
 table.list td.actions { text-align: right; white-space: nowrap; }
+table.list td.actions form { display: inline-block; }
+.token-new label { display: block; margin-bottom: 10px; }
+.copy-row { display: flex; gap: 8px; margin-top: 4px; }
+.copy-row input { flex: 1 1 auto; min-width: 0; font-family: ui-monospace, monospace; font-size: .85rem; }
 tr.inactive { opacity: .55; }
 .table-filter { width: 100%; margin-bottom: 10px; }
 .tag-suggestions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: -6px; }

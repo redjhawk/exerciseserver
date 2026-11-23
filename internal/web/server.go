@@ -64,6 +64,7 @@ func New(st *store.Store, dataDir, version string) (*Server, error) {
 		"join":          strings.Join,
 		"size":          humanSize,
 		"date":          func(t time.Time) string { return t.Format("02/01/2006") },
+		"datetime":      func(t time.Time) string { return t.Local().Format("02/01/2006 15:04") },
 		"lower":         strings.ToLower,
 		"defaultModel":  defaultModel,
 		"defaultModels": defaultModels,
@@ -134,6 +135,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/niveles", s.admin(s.adminLevelCreate))
 	mux.HandleFunc("POST /admin/niveles/{id}", s.admin(s.adminLevelUpdate))
 	mux.HandleFunc("POST /admin/niveles/{id}/borrar", s.admin(s.adminLevelDelete))
+
+	mux.HandleFunc("GET /admin/tokens", s.admin(s.adminTokens))
+	mux.HandleFunc("POST /admin/tokens", s.admin(s.adminTokenCreate))
+	mux.HandleFunc("POST /admin/tokens/{id}/revocar", s.admin(s.adminTokenRevoke))
+	mux.HandleFunc("POST /admin/tokens/{id}/borrar", s.admin(s.adminTokenDelete))
+
+	mux.HandleFunc("GET /instrucciones-ia.md", s.auth(s.instructionsFile))
+	mux.HandleFunc("/mcp", s.mcpHandler)
+	mux.HandleFunc("/mcp/{token}", s.mcpHandler)
 
 	mux.HandleFunc("GET /admin/etiquetas", s.admin(s.adminTags))
 	mux.HandleFunc("POST /admin/etiquetas/{id}", s.admin(s.adminTagRename))
@@ -589,6 +599,11 @@ func randomName(ext string) string {
 
 // SaveFile copies r into the files directory, validates it and records it in the store.
 func (s *Server) SaveFile(origName string, r io.Reader, levelID int64, tags []string, description string) (int64, error) {
+	return s.saveFile(origName, "", r, levelID, tags, description)
+}
+
+// saveFile is SaveFile with an optional explicit title (empty = guess it from the content or name).
+func (s *Server) saveFile(origName, title string, r io.Reader, levelID int64, tags []string, description string) (int64, error) {
 	origName = filepath.Base(strings.ReplaceAll(origName, "\\", "/"))
 	kind := kindOf(origName)
 	if kind == "" {
@@ -615,8 +630,11 @@ func (s *Server) SaveFile(origName string, r io.Reader, levelID int64, tags []st
 		os.Remove(dst)
 		return 0, fmt.Errorf("%s: no parece un PDF válido", origName)
 	}
+	if title = strings.TrimSpace(title); title == "" {
+		title = guessTitle(origName, head, kind)
+	}
 	id, err := s.store.CreateFile(store.NewFile{
-		Title: guessTitle(origName, head, kind), Description: description, Kind: kind,
+		Title: title, Description: description, Kind: kind,
 		OrigName: origName, StoredName: stored, Size: n, LevelID: levelID, Tags: tags,
 	})
 	if err != nil {
@@ -627,16 +645,21 @@ func (s *Server) SaveFile(origName string, r io.Reader, levelID int64, tags []st
 }
 
 func (s *Server) replaceFile(id int64, fh *multipart.FileHeader) error {
-	origName := filepath.Base(strings.ReplaceAll(fh.Filename, "\\", "/"))
-	kind := kindOf(origName)
-	if kind == "" {
-		return fmt.Errorf("%s: solo se admiten ficheros .html, .htm y .pdf", origName)
-	}
 	f, err := fh.Open()
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	return s.replaceContent(id, fh.Filename, f)
+}
+
+// replaceContent swaps the stored content of an existing file, keeping its id, metadata and links.
+func (s *Server) replaceContent(id int64, origName string, f io.Reader) error {
+	origName = filepath.Base(strings.ReplaceAll(origName, "\\", "/"))
+	kind := kindOf(origName)
+	if kind == "" {
+		return fmt.Errorf("%s: solo se admiten ficheros .html, .htm y .pdf", origName)
+	}
 	stored := randomName("." + kind)
 	dst := filepath.Join(s.filesDir, stored)
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)

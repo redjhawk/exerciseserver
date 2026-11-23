@@ -1,0 +1,82 @@
+{{define "content"}}
+{{$csrf := .Session.CSRFToken}}
+{{$d := .Data}}
+<h1>Tokens de API</h1>
+
+{{if $d.NewToken}}
+<section class="panel token-new">
+  <h2>Token creado: {{$d.NewTokenName}}</h2>
+  <p class="msg warn">Cópialo ahora: <strong>no se volverá a mostrar</strong>.
+  {{if $d.NewTokenExp.IsZero}}No caduca.{{else}}Caduca el {{datetime $d.NewTokenExp}}.{{end}}</p>
+  <label>Token
+    <span class="copy-row"><input readonly value="{{$d.NewToken}}" id="tok-raw"><button type="button" class="small" data-copy="tok-raw">Copiar</button></span>
+  </label>
+  <label>URL para claude.ai (conector personalizado, sin autenticación)
+    <span class="copy-row"><input readonly value="{{$d.BaseURL}}/mcp/{{$d.NewToken}}" id="tok-url"><button type="button" class="small" data-copy="tok-url">Copiar</button></span>
+  </label>
+  <label>Comando para Claude Code
+    <span class="copy-row"><input readonly value="claude mcp add --transport http ejercicios {{$d.BaseURL}}/mcp --header &quot;Authorization: Bearer {{$d.NewToken}}&quot;" id="tok-cc"><button type="button" class="small" data-copy="tok-cc">Copiar</button></span>
+  </label>
+</section>
+{{end}}
+
+<section class="panel">
+  <h2>Instrucciones para la IA</h2>
+  <p>Explican a la IA cómo debe ser el HTML, cómo usar la IA de la plataforma (y cómo funcionar sin ella) y cómo publicar o modificar ejercicios. Corresponden siempre a la versión instalada ({{.Version}}).</p>
+  <p class="row">
+    <a class="button" href="/instrucciones-ia.md" target="_blank" rel="noopener">Ver</a>
+    <a class="button primary" href="/instrucciones-ia.md?descargar=1">⬇ Descargar INSTRUCCIONES_CLAUDE.md</a>
+  </p>
+  <label>Si la IA está conectada al MCP, basta con decirle:
+    <span class="copy-row"><input readonly id="tok-prompt" value="Antes de crear el ejercicio, llama a la herramienta obtener_instrucciones del conector «ejercicios» y síguelas al pie de la letra. Cuando termines, súbelo con subir_ejercicio y dame el enlace."><button type="button" class="small" data-copy="tok-prompt">Copiar</button></span>
+  </label>
+  <p class="hint">Si no está conectada, descarga el fichero y adjúntalo (o pégalo en las instrucciones de tu proyecto de Claude).</p>
+</section>
+
+<section class="panel">
+  <h2>Nuevo token</h2>
+  <form method="post" action="/admin/tokens" class="row">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label>Nombre <input name="name" required maxlength="100" placeholder="p. ej. Claude web, sesión de hoy" autocomplete="off"></label>
+    <label>Duración
+      <select name="duration">
+        {{range $d.Durations}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <button type="submit" class="primary">Crear token</button>
+  </form>
+  <p class="hint">Los tokens solo sirven para el servidor MCP (<code>{{$d.BaseURL}}/mcp</code>): consultar el catálogo y leer, subir y modificar ejercicios HTML (no pueden borrarlos). No dan acceso a la administración.</p>
+</section>
+
+<section class="panel">
+  <table class="list">
+    <thead><tr><th>Nombre</th><th>Estado</th><th>Creado</th><th>Caduca</th><th>Último uso</th><th></th></tr></thead>
+    <tbody>
+    {{range $d.Tokens}}
+    <tr class="{{if ne .Status "activo"}}inactive{{end}}">
+      <td><strong>{{.Name}}</strong></td>
+      <td>{{.Status}}{{if not .RevokedAt.IsZero}}<br><small class="muted">{{datetime .RevokedAt}}</small>{{end}}</td>
+      <td>{{datetime .CreatedAt}}</td>
+      <td>{{if .ExpiresAt.IsZero}}nunca{{else}}{{datetime .ExpiresAt}}{{end}}</td>
+      <td>{{if .LastUsedAt.IsZero}}<span class="muted">nunca</span>{{else}}{{datetime .LastUsedAt}}{{end}}</td>
+      <td class="actions">
+        {{if eq .Status "activo"}}
+        <form method="post" action="/admin/tokens/{{.ID}}/revocar" data-confirm="¿Revocar el token «{{.Name}}»? Dejará de funcionar inmediatamente.">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <button type="submit" class="small">Revocar</button>
+        </form>
+        {{end}}
+        <form method="post" action="/admin/tokens/{{.ID}}/borrar" data-confirm="¿Borrar el token «{{.Name}}»? Desaparecerá de la lista y dejará de funcionar.">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <button type="submit" class="small danger">Borrar</button>
+        </form>
+      </td>
+    </tr>
+    {{else}}
+    <tr><td colspan="6" class="muted">No hay tokens.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <p class="hint"><strong>Revocar</strong> desactiva el token y lo deja en la lista como registro. <strong>Borrar</strong> lo elimina del todo (y también deja de funcionar).</p>
+</section>
+{{end}}

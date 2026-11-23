@@ -20,6 +20,7 @@
     <a href="/admin/usuarios" {{if eq .Active "users"}}class="on"{{end}}>Usuarios</a>
     <a href="/admin/niveles" {{if eq .Active "levels"}}class="on"{{end}}>Niveles</a>
     <a href="/admin/etiquetas" {{if eq .Active "tags"}}class="on"{{end}}>Etiquetas</a>
+    <a href="/admin/tokens" {{if eq .Active "tokens"}}class="on"{{end}}>Tokens</a>
     {{end}}
   </nav>
   <form method="post" action="/logout" class="logout">
